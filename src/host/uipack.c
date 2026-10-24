@@ -27,7 +27,12 @@ char *uipack_extract(void) {
   char *zip = path_join(base, "ui.zip");
   if (!file_write_all(zip, data, sz)) { free(zip); free(index); return NULL; }
   char cmd[MAX_PATH * 4];
-  snprintf(cmd, sizeof(cmd), "tar.exe -xf \"%s\" -C \"%s\"", zip, base);
+  /* 明确用 System32 的 bsdtar：PATH 里若是 Git 的 GNU tar，解不了 zip */
+  char sys[MAX_PATH];
+  if (GetSystemDirectoryA(sys, sizeof(sys)))
+    snprintf(cmd, sizeof(cmd), "\"%s\\tar.exe\" -xf \"%s\" -C \"%s\"", sys, zip, base);
+  else
+    snprintf(cmd, sizeof(cmd), "tar.exe -xf \"%s\" -C \"%s\"", zip, base);
   STARTUPINFOW si; PROCESS_INFORMATION pi;
   memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
   si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;

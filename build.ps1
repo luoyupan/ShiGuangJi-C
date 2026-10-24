@@ -78,8 +78,8 @@ function Make-UiPack {
   $zip = Join-Path $build "ui.zip"
   if (Test-Path $zip) { Remove-Item $zip -Force }
   Write-Host ">> ui-pack" -ForegroundColor Cyan
-  & tar.exe -a -c -f $zip -C (Join-Path $build "ui") .
-  if ($LASTEXITCODE -ne 0) { throw "ui.zip packaging failed" }
+  Compress-Archive -Path (Join-Path $build "ui\*") -DestinationPath $zip -Force -CompressionLevel Optimal
+  if (-not (Test-Path $zip)) { throw "ui.zip packaging failed" }
 }
 
 function Write-JsBundle([string]$id, [string[]]$parts) {

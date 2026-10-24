@@ -51,8 +51,8 @@ $readme = @"
 # 打包 zip
 $zip = Join-Path $distRoot "ShiGuangJi-$ver-win64.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
-& tar.exe -a -c -f $zip -C $distRoot "ShiGuangJi-$ver"
-if ($LASTEXITCODE -ne 0) { throw "zip failed" }
+Compress-Archive -Path $dist -DestinationPath $zip -Force -CompressionLevel Optimal
+if (-not (Test-Path $zip)) { throw "zip failed" }
 
 Write-Host ""
 Write-Host "Package done:" -ForegroundColor Green
