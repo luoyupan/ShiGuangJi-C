@@ -6,7 +6,6 @@
 > **1.0.0 正式版**（2026-10-24）｜ 0.4.0-c 为此前的测试版 ｜ Windows 10/11 x64 ｜ C11 ｜ WebView2
 > ｜ 构建 **MSVC / Windows SDK** ｜ 无 npm、无 Node、无 Electron 运行时
 
-![主界面](docs/images/hub.png)
 
 ---
 
@@ -127,7 +126,6 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 - MOD：目录规则引擎（Bethesda / 巫师 / 赛博朋克 / 黑神话 / 帕鲁 / 我的世界…）、
   启停（`.disabled`）、导入（文件夹 / zip / tar / gz）、打包 zip、MOD 码、创意工坊
 
-![游戏库](docs/images/games.png)
 
 ### MOD（mods.dll）
 - 左栏选游戏、右侧 MOD 面板，界面与交互复用原版；数据 IPC 仍在 `games.dll`
@@ -140,7 +138,6 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 - 播放交给 `<audio>`，音频走宿主的 `/local` 代理（**支持 Range**，FLAC 也能拖进度）
 - 听歌统计（天桶、周/月/年、日历热力、唱片墙、单曲/音乐人 TOP、语言占比）
 
-![音乐](docs/images/music.png)
 
 ### 图片（photos.dll）
 - 多文件夹递归扫描（jpg/jpeg/png/webp/gif/bmp/avif），跳过 `node_modules/.git/回收站`
@@ -148,7 +145,6 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 - WIC 按需生成缩略图并缓存；图片墙 / 大图 / 手动标地点（校验 ±90/±180、拒绝 0,0）
 - 足迹地图：复用原版 Canvas 墨卡托引擎 + 内置离线轮廓；天地图 `tk` 由用户填
 
-![足迹地图](docs/images/photos-map.png)
 
 ### 网盘（netdisk.dll）
 - 12 家平台链接识别、提取码 / 解压码提取
@@ -161,7 +157,6 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 - 书签、历史、搜索引擎、书签侧栏；侧栏收缩时画布自动重排
 - 网页跑在系统 Edge 内核里，和系统浏览器同源能力
 
-![浏览器](docs/images/browser.png)
 
 ### 联机（link.dll）
 - **TCP + UDP 双通道端口映射**：房主开隧道端口 → 本机游戏端口；加入方开本地端口 →
@@ -170,7 +165,6 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 - 房间聊天（控制通道，消息不落盘）、本机网卡信息（需同意、只读本机、**不联网**）
 - 端口可用性探测；中转服务端端口可用性（协议细节见「未完成」）
 
-![联机](docs/images/link.png)
 
 ### 第三方 dll 插件（hello.dll）
 - `modules\hello.dll` 一个文件里同时有：清单、界面 JS、C 后端
