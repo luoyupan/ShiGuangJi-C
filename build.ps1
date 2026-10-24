@@ -18,8 +18,19 @@ $sdk = Join-Path $root "third_party\webview2"
 $cjson = Join-Path $root "third_party\cJSON"
 $vcvars = "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 if (-not (Test-Path $vcvars)) {
-  $vs = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\2022\*\VC\Auxiliary\Build\vcvars64.bat" -ErrorAction SilentlyContinue | Select-Object -First 1
-  if ($vs) { $vcvars = $vs.FullName } else { throw "vcvars64.bat not found (need VS 2022 Build Tools)" }
+  # VS 2022 / 2026, BuildTools / Enterprise / Community ... 都试一遍
+  $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  if (Test-Path $vswhere) {
+    $inst = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+    if ($inst) {
+      $cand = Join-Path $inst.Trim() "VC\Auxiliary\Build\vcvars64.bat"
+      if (Test-Path $cand) { $vcvars = $cand }
+    }
+  }
+}
+if (-not (Test-Path $vcvars)) {
+  $vs = Get-ChildItem "C:\Program Files*\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($vs) { $vcvars = $vs.FullName } else { throw "vcvars64.bat not found (need Visual Studio C++ Build Tools)" }
 }
 
 New-Item -ItemType Directory -Force -Path $build, $gen, $modout | Out-Null
