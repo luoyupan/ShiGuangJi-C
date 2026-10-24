@@ -1,0 +1,12 @@
+{
+  "id": "link",
+  "route": "#/link",
+  "title": "联机",
+  "desc": "P2P · 内网穿透 · 中转",
+  "icon": "plug",
+  "accent": "#7c5cff",
+  "order": 6,
+  "detail": "和朋友联局域网游戏：直连、打洞或自建中转。",
+  "builtin": true,
+  "channels": ["link:"]
+}

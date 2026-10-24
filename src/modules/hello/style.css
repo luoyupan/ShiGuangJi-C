@@ -1,0 +1,4 @@
+.hello-plugin { padding: 4px 0; }
+.hello-row { display: flex; gap: 10px; align-items: center; margin: 14px 0; }
+.hello-input { height: 34px; width: 220px; border: 1px solid var(--border); border-radius: 9px; padding: 0 10px; background: var(--bg-input); color: var(--text); }
+.hello-out { padding: 14px 16px; border-radius: 12px; background: var(--bg-soft); color: var(--text); line-height: 1.6; }

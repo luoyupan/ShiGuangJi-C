@@ -1,0 +1,541 @@
+/* ============================================================
+   拾光集 · 壳体（标题栏 / 主界面 Hub / 设置）(shell.css)
+   ============================================================ */
+
+.app { display: flex; flex-direction: column; height: 100vh; position: relative; }
+
+/* ---------------- 标题栏 ---------------- */
+.titlebar {
+  height: 46px; flex: 0 0 46px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 0 8px 0 14px;
+  -webkit-app-region: drag;
+  background: var(--glass);
+  backdrop-filter: saturate(1.4) blur(14px);
+  border-bottom: 1px solid var(--border);
+  position: relative; z-index: 30;
+}
+.tb-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.tb-center { flex: 1; display: flex; justify-content: center; min-width: 0; }
+.tb-right { display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+
+.brand { display: flex; align-items: center; gap: 9px; cursor: pointer; -webkit-app-region: no-drag; }
+.brand-logo { width: 24px; height: 24px; border-radius: 7px; box-shadow: var(--shadow-sm); }
+.brand-name { font-weight: 700; letter-spacing: .3px; }
+
+.tb-bread { display: flex; align-items: center; gap: 8px; color: var(--text-dim); font-size: .92em; }
+.tb-bread .crumb { -webkit-app-region: no-drag; cursor: pointer; padding: 3px 8px; border-radius: 8px; }
+.tb-bread .crumb:hover { background: var(--surface-2); color: var(--text); }
+.tb-bread .sep { opacity: .5; }
+
+.icon-btn {
+  width: 34px; height: 34px; border: 0; border-radius: 10px;
+  background: transparent; color: var(--text-dim); cursor: pointer;
+  display: grid; place-items: center; transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text); }
+.icon-btn .ic { width: 18px; height: 18px; fill: currentColor; }
+/* ⚠️ 必须显式写这一条：.icon-btn 自带 display:grid，作者样式会盖掉 [hidden] 的浏览器默认
+   样式，于是 `btn.hidden = true` 看着赋了值、按钮却还在。 */
+.icon-btn[hidden] { display: none; }
+html[data-theme='light'] .ic-sun { display: none; }
+html[data-theme='dark'] .ic-moon { display: none; }
+
+.win-controls { display: flex; margin-left: 6px; }
+.win-btn {
+  width: 42px; height: 34px; border: 0; background: transparent; color: var(--text-dim);
+  cursor: pointer; display: grid; place-items: center; border-radius: 8px; transition: background var(--dur);
+}
+.win-btn svg { width: 12px; height: 12px; stroke: currentColor; fill: none; }
+.win-btn:hover { background: var(--surface-2); color: var(--text); }
+.win-close:hover { background: #e5484d; color: #fff; }
+
+/* ---------------- 视图容器 ---------------- */
+.view { flex: 1; position: relative; overflow: hidden; }
+
+/* ============================================================
+   主界面 Hub
+   ============================================================ */
+.hub {
+  position: absolute; inset: 16px;
+  border-radius: var(--radius-xl);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  background-image: var(--hub-bg, none);
+  background-size: cover; background-position: center;
+}
+.hub-bg-mask { position: absolute; inset: 0; background: var(--surface); opacity: var(--hub-bg-opacity, 0); pointer-events: none; }
+
+.hub-top {
+  display: flex; justify-content: flex-end; gap: 10px;
+  padding: 20px 22px 0; position: relative; z-index: 2;
+}
+.hub-action {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 8px 16px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-dim); cursor: pointer; font-size: .93em;
+  transition: all var(--dur) var(--ease);
+}
+.hub-action:hover { color: var(--text); border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.hub-action .ic { width: 16px; height: 16px; fill: currentColor; }
+
+/* 第五十四轮：卡片能换行了 → 窗口一矮（两行 + 问候语）就得能滚，不能裁掉最后一行。
+   `min-height:0` 是 flex 子项能收缩的关键（没有它 overflow 不生效） */
+.hub-mid {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px;
+  position: relative; z-index: 2;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  width: 100%; padding: 16px 24px;
+}
+.hub-hello { text-align: center; animation: fade-up .4s var(--ease) both; }
+.hub-hello h1 { margin: 0; font-size: 2rem; font-weight: 700; letter-spacing: .5px; }
+.hub-hello p { margin: 8px 0 0; color: var(--text-dim); font-size: .96em; }
+
+/* 卡片区：**自适应换行**（第五十四轮）。
+   🔴 原来只有 `display:flex` 没 `wrap`，7 张卡两边各被裁掉一截；
+   而且卡片是 flex 子项、默认 `flex-shrink:1` → 窗口一窄卡片就被压扁（截图里那种）。
+   两处一起补：`wrap` + `flex:0 0 auto`。 */
+.modules {
+  display: flex; flex-wrap: wrap; justify-content: center; align-content: center;
+  gap: 18px; max-width: 100%;
+  animation: fade-up .5s var(--ease) .06s both;
+}
+.module-card {
+  flex: 0 0 auto;                      /* 不许被压扁 */
+  /* 宽度跟着窗口连续变：默认 1360 窗口下约 152px，7 张正好一行；
+     窗口一窄就缩到 126px 并靠 wrap 换行。高度固定，卡片比例不至于走形得厉害。 */
+  width: clamp(126px, 11.6vw, 168px); height: 172px; border-radius: var(--radius-lg);
+  background: var(--surface-2); border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 13px;
+  cursor: pointer; position: relative; overflow: hidden;
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+}
+.module-card::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit;
+  background: radial-gradient(120px 90px at 50% 0%, color-mix(in srgb, var(--mc, var(--accent)) 16%, transparent), transparent 70%);
+  opacity: 0; transition: opacity var(--dur) var(--ease);
+}
+.module-card:hover { transform: translateY(-6px); box-shadow: var(--shadow-lg); border-color: var(--accent-line); }
+.module-card:hover::after { opacity: 1; }
+.module-card:active { transform: translateY(-2px) scale(.99); }
+.module-icon {
+  width: 58px; height: 58px; border-radius: 16px; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--mc, var(--accent)) 14%, transparent);
+  color: var(--mc, var(--accent)); position: relative; z-index: 1;
+}
+.module-icon svg { width: 30px; height: 30px; fill: currentColor; }
+.module-title {
+  font-size: 1.06rem; font-weight: 600; z-index: 1;
+  max-width: 100%; padding: 0 10px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* 描述限两行：窗口小/名字长的时候它会折成三四行，把图标挤上去（截图里那种丑） */
+.module-desc {
+  font-size: .8em; color: var(--text-mute); z-index: 1; margin-top: -6px;
+  max-width: 100%; padding: 0 12px; text-align: center; line-height: 1.35;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* 窗口再小：字号和间距收一收（宽度由 clamp 负责，这里只管别挤成一团） */
+@media (max-width: 860px) {
+  .module-title { font-size: 1rem; }
+  .module-desc { font-size: .74em; padding: 0 8px; }
+  .modules { gap: 14px; }
+  .hub-hello h1 { font-size: 1.6rem; }
+}
+/* 窗口很矮（笔记本 + 两行卡片）：问候语收一收，把高度让给卡片 */
+@media (max-height: 700px) {
+  .hub-mid { gap: 20px; padding: 10px 24px; }
+  .hub-hello h1 { font-size: 1.7rem; }
+}
+
+/* 第五十四轮：原来的五个「分页点」是纯装饰（卡片区从来不分页），已换成一句真提示 */
+.hub-tip {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: center;
+  font-size: .8em; color: var(--text-mute);
+  animation: fade-in .6s var(--ease) .2s both;
+}
+.hub-tip .dot-sep { opacity: .5; }
+.hub-tip .hub-tip-link { cursor: pointer; color: var(--text-dim); border-bottom: 1px dashed transparent; transition: all var(--dur) var(--ease); }
+.hub-tip .hub-tip-link:hover { color: var(--accent); border-bottom-color: var(--accent-line); }
+
+/* ---------------- 卡片拖动排序（第五十四轮） ---------------- */
+/* 被拖的那张：略微放大 + 虚线描边 + 一层彩影，明确「它正在动」。
+   ⚠️ 这里不跟手飞（卡片是按 DOM 位置重排的），所以缩放和描边是唯一的「我抓住了」反馈。 */
+/* 被拖起来的那张卡：位置由 inline transform 每帧跟手，这里只管「拿起来之后」的样子。
+   🔴 千万别在这里写 transform —— JS 每帧都在改 inline transform（含 scale），
+      两处抢同一个属性只会打架；缩放也由 JS 写进 inline 里。 */
+.module-card.drag-src {
+  border: 1.5px dashed var(--accent);
+  box-shadow: 0 26px 50px -18px color-mix(in srgb, var(--accent) 55%, transparent), var(--shadow-lg);
+  cursor: grabbing;
+  z-index: 5;
+  /* 🔴🔴 跟手绝不能有过渡：一有过渡卡片就会「拖着走」、黏手、慢半拍 */
+  transition: none;
+  will-change: transform;
+  /* 抬起来就别再让卡片自己的 hover / active 生效了：inline transform 优先级最高，
+     hover 的 translateY 撞不过它，所以这里不用额外写规则 */
+  transform-origin: center center;
+}
+/* 松手归位：卡片自己**滑**回格子，而不是「啪」一下弹回去（起点是 inline transform，终点是归零） */
+.module-card.drag-snap {
+  transition: transform 220ms cubic-bezier(.22,.68,.24,1),
+              box-shadow 220ms ease, border-color 220ms ease;
+}
+/* 拖动中：其它卡片的悬停抬起停掉（会和 FLIP 动画的 transform 打架），
+   ⚠️ 必须用 :not(.drag-src) 排除被拖那张 —— 否则上面那条 scale 会被这条 hover 压掉 */
+.modules.dragging .module-card:not(.drag-src):hover { transform: none; box-shadow: none; border-color: var(--border); }
+.modules.dragging .module-card:not(.drag-src)::after { opacity: 0; }
+.modules.dragging { cursor: grabbing; }
+/* 拖动期间放开内容区的裁剪：卡片浮起来飞到问候选上方时，不许被 .hub-mid 切掉一半
+   （外层 .hub 自己有 overflow:hidden + 圆角，边界该由它来管） */
+.hub-mid.hub-drag-free { overflow: visible; }
+/* 拖动期间别选中文字、别让光标变成文本 I 型 */
+body.hub-dragging { user-select: none; -webkit-user-select: none; cursor: grabbing; }
+
+/* 隐藏空间入口（主界面右下小挂件） */
+.hub-hidden-fab {
+  position: absolute; right: 22px; bottom: 22px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 15px; border-radius: 999px; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--text-dim); transition: all var(--dur) var(--ease);
+}
+.hub-hidden-fab:hover { color: var(--text); box-shadow: var(--shadow-sm); }
+.hub-hidden-fab .ic { width: 15px; height: 15px; fill: currentColor; }
+
+/* ============================================================
+   通用页面（设置 / 音乐 / 网盘等的容器）
+   ============================================================ */
+.page { position: absolute; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+.page-head {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+  padding: 16px 22px; border-bottom: 1px solid var(--border);
+  background: var(--glass); backdrop-filter: blur(10px); z-index: 5;
+}
+.page-head h2 { margin: 0; font-size: 1.22rem; font-weight: 650; }
+.page-head .sub { color: var(--text-dim); font-size: .88em; }
+.page-head .spacer { flex: 1; }
+.page-body { flex: 1; overflow: auto; padding: 22px; }
+.back-btn {
+  display: inline-flex; align-items: center; gap: 6px; padding: 7px 13px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text-dim); cursor: pointer; transition: all var(--dur) var(--ease);
+}
+.back-btn:hover { color: var(--text); border-color: var(--border-strong); }
+
+/* 设置页 */
+.settings-wrap { max-width: 900px; margin: 0 auto; }
+.card {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 18px 20px; margin-bottom: 16px;
+  box-shadow: var(--shadow-sm);
+}
+.card h3 { margin: 0 0 4px; font-size: 1.02rem; }
+.card .hint { color: var(--text-dim); font-size: .86em; margin: 0 0 14px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 9px 0; }
+.row .label { width: 110px; color: var(--text-dim); flex: 0 0 auto; }
+.row .grow { flex: 1; }
+.swatches { display: flex; gap: 10px; flex-wrap: wrap; }
+.swatch { width: 30px; height: 30px; border-radius: 9px; cursor: pointer; border: 2px solid transparent; transition: transform var(--dur) var(--ease); }
+.swatch:hover { transform: scale(1.12); }
+.swatch.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--surface) inset; }
+
+/* 设置页 · 「MOD 下载」两个落点二选一的大按钮 */
+.md-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 10px 0 4px; }
+.md-opt {
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-2); cursor: pointer;
+  transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.md-opt:hover { border-color: var(--accent-line); }
+.md-opt.on { border-color: var(--accent); background: var(--accent-soft); }
+.md-opt .md-t { font-size: .92em; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.md-opt .md-t::before {
+  content: ''; width: 13px; height: 13px; border-radius: 50%; flex: none;
+  border: 2px solid var(--border-strong);
+}
+.md-opt.on .md-t::before { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft) inset; }
+.md-opt .md-s { font-size: .8em; color: var(--text-mute); margin-top: 5px; line-height: 1.5; }
+
+/* ============================================================
+   设置页 · 「插件」开关列表（第四十九轮）
+   ------------------------------------------------------------
+   五个内置模块现在是可开关的插件。这里一行一个：图标 / 名字 + 说明 / 开关。
+   ============================================================ */
+.prows { display: flex; flex-direction: column; gap: 8px; margin: 10px 0 4px; }
+.prow {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 13px; border: 1px solid var(--border); border-radius: var(--radius-md);
+  background: var(--surface-2);
+  transition: border-color var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+.prow:hover { border-color: var(--accent-line); }
+.prow.off { opacity: .6; }
+/* ⚠️ 有尺寸的东西给显式尺寸：uiSpan() 的 svg 不带 width，漏了就退回浏览器默认（会撑成巨图） */
+.prow-ico {
+  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  display: grid; place-items: center;
+  background: var(--surface-3); color: var(--text-dim);
+}
+.prow-ico svg { width: 18px; height: 18px; fill: currentColor; }
+.prow-main { flex: 1; min-width: 0; }
+.prow-t { display: flex; align-items: center; gap: 8px; font-size: .95em; font-weight: 600; }
+.prow-tag {
+  font-size: .74em; font-weight: 500; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text-mute);
+}
+.prow-s { font-size: .8em; color: var(--text-mute); margin-top: 4px; line-height: 1.5; }
+
+/* ============================================================
+   设置页 · 第三方插件分组（第五十轮）
+   ============================================================ */
+.ext-head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 18px 0 4px; padding-top: 14px; border-top: 1px dashed var(--border);
+}
+.ext-head-t { font-size: .95em; font-weight: 600; }
+.ext-head .btn { padding: 5px 11px; }
+/* 「第三方」小标签：颜色偏警示（用户要一眼区分「我装的」和「自带的」） */
+.prow-tag.ext { border-color: var(--warn, #f59e0b); color: var(--warn, #f59e0b); }
+.ext-risk { color: var(--warn, #f59e0b) !important; font-size: .82em !important; margin: 8px 0 2px !important; }
+.ext-empty {
+  padding: 14px; border-radius: var(--radius-md); border: 1px dashed var(--border);
+  color: var(--text-mute); font-size: .86em; line-height: 1.7; text-align: center;
+}
+.prow.bad { border-color: color-mix(in srgb, var(--danger, #d9534f) 55%, var(--border)); }
+.prow.bad .prow-ico { color: var(--danger, #d9534f); }
+.prow.bad .prow-s { color: var(--danger, #d9534f); }
+
+/* ============================================================
+   第三方插件页（#/p/<id>）：页头沿用 .page-head，正文交给插件自己
+   ============================================================ */
+.ext-page .ext-body { padding: 20px 24px; }
+.ext-fail {
+  max-width: 720px; margin: 24px auto; padding: 16px 18px;
+  border-radius: var(--radius-md); border: 1px solid var(--border-strong);
+  background: var(--surface-2);
+}
+.ext-fail-t { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.ext-fail-t .ic { width: 18px; height: 18px; fill: var(--warn, #f59e0b); flex: 0 0 auto; }
+.ext-fail-s {
+  margin: 10px 0 0; padding: 10px 12px; border-radius: 9px; background: var(--surface);
+  border: 1px solid var(--border); font-size: .82em; line-height: 1.65;
+  color: var(--text-dim); white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow: auto;
+}
+.ext-fail-acts { display: flex; gap: 8px; margin-top: 12px; }
+
+/* 开关（.switch 自己一套，不依赖 input[type=checkbox]，主题变量都能吃到） */.switch {
+  flex: none; width: 42px; height: 24px; border-radius: 999px; position: relative; cursor: pointer;
+  background: var(--border-strong); transition: background var(--dur) var(--ease);
+}
+.switch.on { background: var(--accent); }
+.switch-knob {
+  position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  transition: transform var(--dur) var(--ease);
+}
+.switch.on .switch-knob { transform: translateX(18px); }
+
+/* ============================================================
+   设置页 · 「更新」发现新版时的信息块（第四十九轮）
+   ============================================================ */
+.up-new {
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--accent-line); background: var(--accent-soft);
+}
+.up-new-t { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.up-new-t .ic { width: 17px; height: 17px; fill: currentColor; flex: 0 0 auto; }
+.up-tag {
+  font-size: .74em; font-weight: 500; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--border-strong); color: var(--text-dim);
+}
+.up-new-s { font-size: .82em; color: var(--text-dim); margin-top: 6px; }
+.up-notes {
+  margin: 9px 0 0; padding: 9px 11px; max-height: 170px; overflow: auto;
+  border-radius: 9px; background: var(--surface); border: 1px solid var(--border);
+  font-family: var(--font-mono, ui-monospace, monospace); font-size: .78em; line-height: 1.6;
+  color: var(--text-dim); white-space: pre-wrap; word-break: break-word;
+}
+.up-acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* 主界面「插件」入口卡（原「更多」）—— 虚线边框，一眼看出不是模块 */
+.module-card.plugin-entry { border-style: dashed; }
+.module-card.plugin-entry .module-icon { background: var(--surface-3); color: var(--text-mute); }
+
+/* 主界面：一个插件都没启用时的空态 */
+.hub-empty { text-align: center; color: var(--text-mute); animation: fade-in .5s var(--ease) both; }
+.hub-empty p { margin: 0 0 12px; }
+
+/* ============================================================
+   模块设置弹层（标题栏齿轮 → 各模块自己的设置）
+   ------------------------------------------------------------
+   左边模块列表、右边该模块的设置。和 .modal.wizard 一样用 flex 撑满，
+   让右侧内容自己滚，头尾不动。
+   ============================================================ */
+.modal.mset {
+  display: flex; flex-direction: column;
+  width: min(940px, 94vw); max-height: 88vh; overflow: hidden;
+}
+.mset-wrap { display: flex; flex: 1; min-height: 0; }
+
+.mset-nav {
+  flex: 0 0 156px; padding: 12px 8px; overflow: auto;
+  border-right: 1px solid var(--border); background: var(--surface-2);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.mset-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 11px; border-radius: 10px; cursor: pointer;
+  color: var(--text-dim); font-size: .93em;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.mset-item .ic { width: 17px; height: 17px; fill: currentColor; flex: 0 0 auto; }
+.mset-item:hover { background: var(--surface-3); color: var(--text); }
+.mset-item.on { background: var(--surface); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-sm); }
+
+.mset-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mset-head { padding: 16px 20px 8px; }
+.mset-head h4 { margin: 0 0 3px; font-size: 1rem; }
+.mset-sub { color: var(--text-mute); font-size: .84em; }
+.mset-body { flex: 1; min-height: 0; overflow: auto; padding: 6px 20px 20px; }
+/* 弹层里的卡片比设置页紧凑一点；.card 自带 margin-bottom，这里不用再给间距 */
+.mset-body .card { padding: 14px 16px; }
+.mset-body .card .hint { margin: 0 0 6px; }
+.mset-body .hint.ok, .mset-body .text-ok { color: #22c55e; }
+.mset-body .row { padding: 6px 0; }
+.mset-body .row .label { width: 96px; }
+/* 长路径要能真的缩下去，省略号才出得来（flex 项的默认 min-width:auto 会顶住） */
+.mset-body .row .grow { min-width: 0; }
+
+.mset-list { display: flex; flex-direction: column; gap: 6px; }
+.mset-line {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 11px; border-radius: 10px;
+  background: var(--surface-2); font-size: .9em;
+}
+.mset-line .grow { min-width: 0; }
+.mset-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+
+/* 隐藏空间解锁门 */
+.gate {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: linear-gradient(160deg, #10131c, #1b1430 60%, #0f1a24);
+  color: #eef2f9;
+}
+.gate-card { width: 360px; text-align: center; animation: pop .32s var(--ease) both; }
+.gate-card .lock { font-size: 44px; margin-bottom: 10px; }
+.gate-card h2 { margin: 0 0 6px; font-size: 1.5rem; }
+.gate-card p { margin: 0 0 22px; color: #9aa6ba; font-size: .9em; }
+.gate-input {
+  width: 100%; padding: 13px 16px; border-radius: 12px; text-align: center; letter-spacing: 4px;
+  background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.14); color: #fff; font-size: 1rem;
+  outline: none; transition: border-color var(--dur);
+}
+.gate-input:focus { border-color: var(--accent); }
+.gate-err { color: #ff8a8a; min-height: 20px; font-size: .86em; margin-top: 10px; }
+
+/* ============================================================
+   常驻迷你播放卡片（js/miniplayer.js）
+   ------------------------------------------------------------
+   右下角浮在内容之上的小卡片：显示正在播放的歌 + 上一首 / 播放暂停 / 下一首
+   + 一条细进度线，可以收起来（只剩一个小圆钮）。
+   ⚠️ `position:absolute` 挂 `.app`（不是 fixed、也不挂 #view）——
+      #view 每次路由都被 clear()，浮层活不过一次切页。
+   ============================================================ */
+.mini-player {
+  position: absolute; right: 18px; bottom: 18px; z-index: 120;
+  width: 306px; display: flex; align-items: center; gap: 10px;
+  padding: 9px 10px; padding-bottom: 12px;
+  background: var(--glass); backdrop-filter: saturate(1.5) blur(16px);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: var(--shadow);
+  animation: pop .26s var(--ease) both;
+}
+/* ⚠️ 写了 display:flex 就必须自己补一条 [hidden] —— 类选择器的权重压过
+   UA 样式里的 `[hidden]{display:none}`（和 .icon-btn 是同一个坑）。 */
+.mini-player[hidden] { display: none; }
+
+.mp-cover {
+  width: 46px; height: 46px; flex: 0 0 auto; border-radius: 10px; overflow: hidden;
+  background: var(--surface-3); display: grid; place-items: center; color: var(--text-mute);
+}
+.mp-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.mp-cover .mp-ph { display: grid; place-items: center; }
+.mp-cover .ic { width: 20px; height: 20px; }
+
+.mp-txt { flex: 1; min-width: 0; cursor: pointer; }
+.mp-name { font-size: .88em; font-weight: 620; line-height: 1.3; }
+.mp-sub { font-size: .74em; color: var(--text-mute); margin-top: 2px; }
+.mp-txt:hover .mp-name { color: var(--accent); }
+
+.mp-act { display: flex; align-items: center; gap: 2px; flex: 0 0 auto; }
+.mp-btn {
+  width: 30px; height: 30px; display: grid; place-items: center; flex: 0 0 auto;
+  background: transparent; border: 0; border-radius: 50%; cursor: pointer; padding: 0;
+  color: var(--text-dim); transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.mp-btn:hover { background: var(--surface-3); color: var(--text); }
+.mp-btn .ic { width: 16px; height: 16px; }
+.mp-btn.mp-toggle { width: 34px; height: 34px; background: var(--accent); color: #fff; }
+.mp-btn.mp-toggle:hover { background: var(--accent); filter: brightness(1.08); }
+
+.mp-fold {
+  width: 22px; height: 22px; display: grid; place-items: center; flex: 0 0 auto;
+  background: transparent; border: 0; border-radius: 6px; cursor: pointer; padding: 0;
+  color: var(--text-mute); transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.mp-fold:hover { background: var(--surface-3); color: var(--text); }
+.mp-fold .ic { width: 14px; height: 14px; transform: rotate(90deg); }   /* chevron 指向下 = 收起 */
+
+/* 卡片底边上的一条细进度线 */
+.mp-seek { position: absolute; left: 10px; right: 10px; bottom: 5px; height: 3px; border-radius: 3px; background: var(--surface-3); overflow: hidden; }
+.mp-seek > i { display: block; height: 100%; width: 0; border-radius: 3px; background: var(--accent); }
+
+/* 收起态：一个小圆钮，点开还能回来 */
+.mini-fab {
+  position: absolute; right: 18px; bottom: 18px; z-index: 120;
+  width: 46px; height: 46px; display: grid; place-items: center; padding: 0;
+  background: var(--glass); backdrop-filter: saturate(1.5) blur(16px);
+  border: 1px solid var(--border); border-radius: 50%; cursor: pointer;
+  box-shadow: var(--shadow); color: var(--accent);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease);
+  animation: pop .24s var(--ease) both;
+}
+.mini-fab[hidden] { display: none; }
+.mini-fab:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.mini-fab .ic { width: 20px; height: 20px; }
+.mini-fab .mp-dot {
+  position: absolute; right: 5px; bottom: 5px; width: 9px; height: 9px; border-radius: 50%;
+  background: var(--text-mute); opacity: 0; transition: opacity var(--dur);
+}
+.mini-fab.playing .mp-dot { background: #22c55e; opacity: 1; animation: mp-pulse 1.4s var(--ease) infinite; }
+@keyframes mp-pulse { 0%, 100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.72); opacity: .55; } }
+
+/* 迷你卡片就在 Toast 的位置上（都是右下角）→ 卡片露出来时把 Toast 往上顶，
+   否则新弹出的提示会正好盖在歌曲信息上。 */
+body.has-mini .toast-stack { bottom: 106px; }
+body.has-mini-fab .toast-stack { bottom: 78px; }
+
+/* ------------------------------------------------------------
+   C 版无边框窗口：把标题栏交给 WebView2 的非客户区拖动
+   （配合 ICoreWebView2Settings9::IsNonClientRegionSupportEnabled）
+   ------------------------------------------------------------ */
+.titlebar {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+.titlebar button,
+.titlebar .brand,
+.titlebar .tb-bread,
+.titlebar .win-controls,
+.titlebar .icon-btn,
+.titlebar .crumb {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}

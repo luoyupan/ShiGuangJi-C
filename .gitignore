@@ -1,0 +1,28 @@
+# build / package outputs (produced by build.ps1 / package.ps1)
+build/
+dist/
+*.zip
+
+# local secrets / test scratch
+_secrets/
+_test/
+_tools/
+
+# compiler intermediates
+*.obj
+*.res
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.user
+*.log
+
+# 例外：WebView2 静态加载库要随源码一起提交（否则 clone 后无法直接构建）
+!third_party/webview2/x64/WebView2LoaderStatic.lib
+
+# editor / OS
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini

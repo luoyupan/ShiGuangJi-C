@@ -1,0 +1,12 @@
+{
+  "id": "photos",
+  "route": "#/photos",
+  "title": "图片",
+  "desc": "本地图片 · 按时间/地点排 · 足迹地图",
+  "icon": "image",
+  "accent": "#e0663a",
+  "order": 7,
+  "detail": "读指定文件夹里的照片：按拍摄时间或地理信息整理，没坐标的可以自己标。",
+  "builtin": true,
+  "channels": ["photos:"]
+}

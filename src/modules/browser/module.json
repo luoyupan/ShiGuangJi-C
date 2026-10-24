@@ -1,0 +1,12 @@
+{
+  "id": "browser",
+  "route": "#/browser",
+  "title": "浏览器",
+  "desc": "Chromium 内核 · 多标签 · 插件",
+  "icon": "globe",
+  "accent": "#2f7de1",
+  "order": 5,
+  "detail": "内置多标签浏览器，可装扩展、看网页版站点。",
+  "builtin": true,
+  "channels": ["browser:"]
+}

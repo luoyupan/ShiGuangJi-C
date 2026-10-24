@@ -1,0 +1,12 @@
+{
+  "id": "netdisk",
+  "route": "#/netdisk",
+  "title": "网盘",
+  "desc": "多平台登录 · 链接下载 · 自动解压",
+  "icon": "cloud",
+  "accent": "#22a06b",
+  "order": 4,
+  "detail": "识别网盘链接并下载，支持登录多个网盘平台。",
+  "builtin": true,
+  "channels": ["netdisk:"]
+}

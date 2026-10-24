@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: https: http:; media-src 'self' data: https: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-src https: http:; connect-src 'self' https: http:;" />
+  <title>拾光集</title>
+  <link rel="stylesheet" href="css/theme.css" />
+  <link rel="stylesheet" href="css/shell.css" />
+  <link rel="stylesheet" href="css/components.css" />
+  <link rel="stylesheet" href="css/modules.css" />
+  <link rel="stylesheet" href="css/photos.css" />
+</head>
+<body>
+  <script src="js/errlog.js"></script>
+  <div class="app" id="app">
+    <!-- 顶部标题栏（自绘、可拖拽） -->
+    <header class="titlebar" id="titlebar">
+      <div class="tb-left">
+        <div class="brand" id="brand" title="回到主界面">
+          <svg class="brand-logo" viewBox="0 0 32 32" aria-hidden="true">
+            <defs>
+              <linearGradient id="lgBrand" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="var(--accent)" />
+                <stop offset="100%" stop-color="var(--accent-2)" />
+              </linearGradient>
+            </defs>
+            <rect x="3" y="3" width="26" height="26" rx="8" fill="url(#lgBrand)" />
+            <path d="M11 20.5l4-9 4 9M12.5 17.5h5" stroke="#fff" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span class="brand-name">拾光集</span>
+        </div>
+        <nav class="tb-bread" id="tbBread"></nav>
+      </div>
+      <div class="tb-center" id="tbCenter"></div>
+      <div class="tb-right">
+        <!-- 当前模块的设置（只在模块页显示，见 shell.js 的 renderTitlebar） -->
+        <button class="icon-btn" id="btnModSet" title="当前模块设置" hidden>
+          <svg viewBox="0 0 24 24" class="ic"><path d="M12 15.4a3.4 3.4 0 100-6.8 3.4 3.4 0 000 6.8z"/><path d="M19.4 13a7.7 7.7 0 000-2l2-1.5-2-3.4-2.4.9a7.6 7.6 0 00-1.7-1L15 3.4h-4l-.3 2.6a7.6 7.6 0 00-1.7 1l-2.4-.9-2 3.4L6.6 11a7.7 7.7 0 000 2l-2 1.5 2 3.4 2.4-.9c.5.4 1.1.8 1.7 1l.3 2.6h4l.3-2.6c.6-.2 1.2-.6 1.7-1l2.4.9 2-3.4-2-1.5z"/></svg>
+        </button>
+        <button class="icon-btn" id="btnTheme" title="切换深色 / 浅色">
+          <svg viewBox="0 0 24 24" class="ic ic-moon"><path d="M12 3a9 9 0 109 9 7 7 0 01-9-9z"/></svg>
+          <svg viewBox="0 0 24 24" class="ic ic-sun"><path d="M12 17a5 5 0 100-10 5 5 0 000 10zm0-14a1 1 0 011 1v1a1 1 0 01-2 0V4a1 1 0 011-1zm0 15a1 1 0 011 1v1a1 1 0 01-2 0v-1a1 1 0 011-1zM4 11h1a1 1 0 010 2H4a1 1 0 010-2zm15 0h1a1 1 0 010 2h-1a1 1 0 010-2z"/></svg>
+        </button>
+        <div class="win-controls">
+          <button class="win-btn" id="winMin" title="最小化"><svg viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.2"/></svg></button>
+          <button class="win-btn" id="winMax" title="最大化"><svg viewBox="0 0 12 12"><rect x="1.6" y="1.6" width="8.8" height="8.8" fill="none" stroke="currentColor" stroke-width="1.2" rx="1.4"/></svg></button>
+          <button class="win-btn win-close" id="winClose" title="关闭"><svg viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.2"/></svg></button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 视图容器：主界面 / 各模块 -->
+    <main class="view" id="view"></main>
+
+    <!-- 常驻迷你播放卡片：挂在 .app 上，跨路由常驻（内容由 js/miniplayer.js 填） -->
+    <div class="mini-player" id="miniPlayer" hidden></div>
+    <button class="mini-fab" id="miniFab" title="展开迷你播放器" aria-label="展开迷你播放器" hidden></button>
+
+    <!-- 浮层 -->
+    <div class="toast-stack" id="toasts"></div>
+    <div class="modal-root" id="modals"></div>
+    <div class="ctx-menu" id="ctxMenu" hidden></div>
+  </div>
+
+  <script src="js/sgj-bridge.js"></script>
+  <script src="preload.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/state.js"></script>
+  <script src="js/huborder.js"></script>
+  <script src="js/playmode.js"></script>
+  <script src="js/music-sort.js"></script>
+  <script src="js/photo-lib.js"></script>
+  <script src="js/photos-map.js"></script>
+  <script src="js/miniplayer.js"></script>
+  <script src="js/extplugins.js"></script>
+  <script src="js/shell.js"></script>
+</body>
+</html>

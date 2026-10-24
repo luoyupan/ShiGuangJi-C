@@ -1,0 +1,12 @@
+{
+  "id": "mods",
+  "route": "#/mods",
+  "title": "MOD",
+  "desc": "装 MOD · 启停 · 工坊 / Nexus",
+  "icon": "extension",
+  "accent": "#8b46ff",
+  "order": 2,
+  "detail": "给游戏装 MOD：认目录、快速导入、启停、创意工坊与 Nexus。",
+  "builtin": true,
+  "channels": ["mods:"]
+}

@@ -1,0 +1,321 @@
+/* ============================================================
+   拾光集 · 通用组件 (components.css)
+   ============================================================ */
+
+/* ---------------- 按钮 ---------------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 16px; border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); cursor: pointer;
+  font-size: .93em; transition: all var(--dur) var(--ease); white-space: nowrap;
+}
+.btn:hover { border-color: var(--border-strong); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.btn:active { transform: translateY(0); }
+.btn .ic { width: 16px; height: 16px; fill: currentColor; }
+.btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn-primary:hover { filter: brightness(1.06); }
+.btn-ghost { background: transparent; }
+.btn-danger { color: #e5484d; border-color: color-mix(in srgb, #e5484d 34%, var(--border)); }
+.btn-danger:hover { background: color-mix(in srgb, #e5484d 12%, transparent); }
+.btn-sm { padding: 6px 11px; font-size: .85em; border-radius: 8px; }
+/* 方方正正的纯图标按钮：和 .inp 等高，用来做「加一条 / 删一条」这类行内小动作 */
+.btn-icon { width: 40px; height: 40px; padding: 0; flex: 0 0 auto; }
+.btn-icon .ic { width: 16px; height: 16px; }
+.btn-icon.btn-sm { width: 30px; height: 30px; }
+.btn-block { width: 100%; }
+.btn[disabled] { opacity: .5; pointer-events: none; }
+
+/* ---------------- 输入 ---------------- */
+.field {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 0 12px; height: 40px; transition: border-color var(--dur) var(--ease), box-shadow var(--dur);
+}
+.field:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.field .ic { width: 17px; height: 17px; fill: var(--text-mute); flex: 0 0 auto; }
+.field input, .field select { flex: 1; border: 0; background: transparent; color: var(--text); outline: none; min-width: 0; height: 100%; }
+.field textarea { flex: 1; border: 0; background: transparent; color: var(--text); outline: none; resize: vertical; padding: 10px 0; }
+input.inp, textarea.inp, select.inp {
+  width: 100%; padding: 10px 13px; border-radius: 10px; background: var(--surface-2);
+  border: 1px solid var(--border); color: var(--text); outline: none; transition: border-color var(--dur);
+}
+input.inp:focus, textarea.inp:focus, select.inp:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+::placeholder { color: var(--text-mute); }
+
+/* ---------------- 游戏卡片（右侧卡片墙） ---------------- */
+.game-grid {
+  display: grid; gap: 16px;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-w, 168px), 1fr));
+  align-content: start;
+}
+.gcard {
+  border-radius: var(--radius-md); overflow: hidden; cursor: pointer; position: relative;
+  background: var(--surface-2); border: 1px solid var(--border);
+  transition: transform var(--dur) var(--ease), box-shadow var(--dur) var(--ease), border-color var(--dur) var(--ease);
+  animation: fade-up .34s var(--ease) both;
+}
+.gcard:hover { transform: translateY(-5px) scale(1.012); box-shadow: var(--shadow-lg); border-color: var(--accent-line); z-index: 3; }
+.gcover { position: relative; aspect-ratio: 2 / 3; background: linear-gradient(150deg, var(--surface-3), var(--surface-2)); overflow: hidden; }
+.gcover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.gcover .ph {
+  position: absolute; inset: 0; display: grid; place-items: center; padding: 12px; text-align: center;
+  color: var(--text-dim); font-weight: 600; font-size: .92em; line-height: 1.3;
+  background: linear-gradient(150deg, color-mix(in srgb, var(--pc, var(--accent)) 26%, var(--surface-3)), var(--surface-2));
+}
+.gcover .pc-badge {
+  position: absolute; left: 8px; top: 8px; width: 26px; height: 26px; border-radius: 8px;
+  background: rgba(10, 14, 22, .62); backdrop-filter: blur(6px);
+  display: grid; place-items: center; z-index: 2;
+}
+.gcover .pc-badge svg { width: 15px; height: 15px; }
+.gcover .run-badge {
+  position: absolute; right: 8px; top: 8px; padding: 3px 9px; border-radius: 999px;
+  background: #22c55e; color: #fff; font-size: .72em; font-weight: 600; z-index: 2;
+  animation: fade-in .3s var(--ease) both;
+}
+/* 目录丢失 / 封面来源标记 */
+.gcover .miss-badge {
+  position: absolute; left: 8px; bottom: 8px; padding: 3px 9px; border-radius: 999px;
+  background: var(--danger, #e5484d); color: #fff; font-size: .72em; font-weight: 600; z-index: 2;
+}
+.gcover .kind-badge {
+  position: absolute; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(10, 14, 22, .58); color: #fff; font-size: .7em; z-index: 2;
+}
+.gcard.missing .gcover { filter: grayscale(.75) brightness(.85); }
+
+/* ---------------- 批量管理（勾选 → 批量移除库） ----------------
+   进多选后卡片不再弹播放按钮，右上角让位给勾选角标
+   （平台徽标在左上，所以勾选角标放右上）。 */
+.gcard.selectable, .track.selectable { cursor: pointer; }
+.gcard.selectable .hover-bar { display: none; }
+.gcard.selectable .gcover .run-badge,
+.gcard.selectable .gcover .kind-badge { display: none; }
+.gcard.picked { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.gcard.picked .gcover { filter: brightness(.94); }
+.track { position: relative; }
+.track.picked { background: var(--accent-soft); }
+.pick {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 22px; height: 22px; border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: .8em; font-weight: 700; line-height: 1;
+  background: rgba(12, 16, 24, .45); border: 1.5px solid rgba(255, 255, 255, .82);
+  color: transparent; backdrop-filter: blur(3px);
+  transition: all var(--dur) var(--ease);
+}
+.pick.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+/* 列表项里勾选框当普通格子用，配色也跟着浅底改 */
+.track .pick { position: static; flex: 0 0 auto; background: var(--surface-3); border-color: var(--border-strong); }
+.track .pick.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tag-missing {
+  display: inline-block; margin-right: 6px; padding: 1px 7px; border-radius: 999px;
+  background: color-mix(in srgb, var(--danger, #e5484d) 16%, transparent);
+  color: var(--danger, #e5484d); font-size: .76em; font-weight: 600;
+}
+.chip.danger { background: color-mix(in srgb, var(--danger, #e5484d) 16%, transparent); color: var(--danger, #e5484d); }
+.danger-card { border-color: color-mix(in srgb, var(--danger, #e5484d) 40%, var(--border)); }
+.un-info { margin: 6px 0 10px; display: flex; flex-direction: column; gap: 6px; }
+.un-info .hint { white-space: pre-wrap; }
+.gcover .hover-bar {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 10px 12px;
+  background: linear-gradient(to top, rgba(8, 12, 20, .88), transparent);
+  display: flex; gap: 6px; opacity: 0; transform: translateY(8px);
+  transition: all var(--dur) var(--ease); z-index: 2;
+}
+.gcard:hover .hover-bar { opacity: 1; transform: none; }
+.hover-bar .hb {
+  flex: 1; height: 30px; border-radius: 8px; border: 0; cursor: pointer;
+  background: rgba(255,255,255,.16); color: #fff; display: grid; place-items: center;
+  transition: background var(--dur);
+}
+.hover-bar .hb:hover { background: rgba(255,255,255,.32); }
+.hover-bar .hb svg { width: 15px; height: 15px; fill: currentColor; }
+.hover-bar .hb.play { background: var(--accent); }
+/* 运行中 / 启动中时这个按钮是「停止」「取消启动」→ 用红色区分开（第三十二轮） */
+.hover-bar .hb.play.run { background: var(--danger, #e5484d); }
+
+/* 「启动中…」：协议启动的游戏在等进程出现那段时间（第三十二轮）
+   ⚠️ 底色用深色半透明 + 白字：这个徽标压在**封面图**上，浅色底会看不清 */
+.gcover .run-badge.pending {
+  background: rgba(10, 14, 22, .62); color: #fff; backdrop-filter: blur(6px);
+  animation: fade-in .3s var(--ease) both, run-pulse 1.5s ease-in-out infinite;
+}
+@keyframes run-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+.gmeta { padding: 9px 10px 11px; }
+.gname { font-size: .9em; font-weight: 600; }
+.gsub { font-size: .76em; color: var(--text-mute); margin-top: 3px; display: flex; gap: 7px; align-items: center; }
+
+/* ---------------- 拖拽/空态 ---------------- */
+.empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  height: 100%; min-height: 320px; color: var(--text-dim); text-align: center;
+}
+.empty .big { font-size: 40px; opacity: .5; }
+.empty h3 { margin: 0; color: var(--text); font-weight: 600; }
+.empty p { margin: 0; font-size: .9em; max-width: 420px; }
+
+/* ---------------- 分页标签 ---------------- */
+.tabs { display: flex; gap: 6px; border-bottom: 1px solid var(--border); padding: 0 4px; }
+.tab {
+  padding: 10px 16px; border: 0; background: transparent; color: var(--text-dim);
+  cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  font-size: .94em; transition: color var(--dur), border-color var(--dur);
+}
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+/* ---------------- Toast ---------------- */
+.toast-stack { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 200; }
+.toast {
+  min-width: 220px; max-width: 380px; padding: 12px 16px; border-radius: 12px;
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
+  display: flex; align-items: center; gap: 10px; animation: pop .26s var(--ease) both; font-size: .92em;
+}
+.toast.out { animation: fade-in .2s var(--ease) reverse both; }
+.toast .dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.toast.ok .dot { background: #22c55e; }
+.toast.err .dot { background: #e5484d; }
+.toast.info .dot { background: var(--accent); }
+
+/* ---------------- Modal ----------------
+   注意：这里用 flex 居中，而不是 left/top:50% + translate(-50%,-50%)。
+   原因：.modal 上带了 animation（fill-mode: both），动画终帧的 transform
+   会覆盖掉 translate 定位，导致弹窗跑到右下角。改用 flex 后，入场动画
+   可以放心地用 transform 做缩放，不影响居中。
+
+   ⚠️ 入场关键帧里**不要放位移**（曾用 scale(.95) translateY(8px)）：
+   动画一旦尚未推进（窗口被节流 / 主线程繁忙 / 自检时刚创建弹窗就立刻测量），
+   fill-mode: both 会把元素**定格在 from 帧**，那 8px 的位移就成了真实偏移 ——
+   表现为"弹窗比窗口中心低 8px"。位移是绕着中心缩放的唯一例外，
+   scale 不影响 rect 中心，translateY 会。所以这里只保留 scale + opacity。 */
+.modal-root { position: fixed; inset: 0; z-index: 150; display: none; }
+.modal-root.on { display: flex; align-items: center; justify-content: center; padding: 28px; }
+.modal-mask { position: absolute; inset: 0; background: var(--overlay); backdrop-filter: blur(3px); animation: fade-in .22s var(--ease) both; }
+.modal {
+  position: relative; z-index: 1; margin: auto;
+  width: min(560px, 92vw); max-height: 88vh; overflow: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); animation: modal-in .26s var(--ease) both;
+}
+.modal.wide { width: min(880px, 94vw); }
+@keyframes modal-in { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: none; } }
+/* 分页签（添加游戏等弹窗内） */
+.mtabs { display: flex; gap: 8px; margin-bottom: 18px; padding: 4px; border-radius: 12px; background: var(--surface-2); }
+.mtab {
+  flex: 1; padding: 9px 14px; border: 0; border-radius: 9px; cursor: pointer;
+  background: transparent; color: var(--text-dim); font-size: .94em; transition: all var(--dur) var(--ease);
+}
+.mtab:hover { color: var(--text); }
+.mtab.on { background: var(--surface); color: var(--accent); font-weight: 600; box-shadow: var(--shadow-sm); }
+.modal-head { display: flex; align-items: center; gap: 10px; padding: 18px 20px; border-bottom: 1px solid var(--border); }
+.modal-head h3 { margin: 0; font-size: 1.08rem; flex: 1; }
+.modal-body { padding: 20px; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
+.close-x { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; width: 30px; height: 30px; border-radius: 8px; }
+.close-x:hover { background: var(--surface-2); color: var(--text); }
+
+/* 右键菜单 */
+.ctx-menu {
+  position: fixed; z-index: 210; min-width: 168px; padding: 6px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg);
+  animation: pop .16s var(--ease) both;
+}
+.ctx-menu .mi { padding: 9px 12px; border-radius: 8px; cursor: pointer; font-size: .92em; display: flex; gap: 9px; align-items: center; }
+.ctx-menu .mi:hover { background: var(--surface-2); }
+.ctx-menu .mi.danger { color: #e5484d; }
+.ctx-menu .divider { height: 1px; background: var(--border); margin: 5px 6px; }
+
+/* 进度条 */
+.bar { height: 6px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width .3s var(--ease); }
+.spinner { width: 16px; height: 16px; border: 2px solid var(--border-strong); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+
+/* 徽标 */
+.chip {
+  display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px;
+  background: var(--surface-3); color: var(--text-dim);
+  /* .76em(≈10.6px) 的汉字在浅色背景上会发虚 —— 抬到 .86em(≈12px) 这一档才立得住。
+     用 em 而不是 px，是为了跟着「设置 → 字号」里的 --font-scale 一起缩放。 */
+  font-size: .86em; line-height: 1.45;
+}
+.chip.accent { background: var(--accent-soft); color: var(--accent); }
+.chip.warn { background: color-mix(in srgb, #d97706 16%, transparent); color: #d97706; }
+
+/* ---------------- 自动添加向导 ----------------
+   .modal 自身是 overflow:auto，向导要把滚动收进中间那段，
+   底栏固定在卡片底部（不跟着列表一起滚）。 */
+.modal.wizard { display: flex; flex-direction: column; width: min(880px, 94vw); max-height: 88vh; overflow: hidden; }
+.modal.wizard .modal-body { display: flex; flex-direction: column; flex: 1; min-height: 0; padding: 0; }
+.wiz { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.wiz-hint { margin: 0; padding: 16px 20px 0; color: var(--text-dim); font-size: .88em; line-height: 1.65; }
+.wiz-hint b { color: var(--accent); }
+.wiz-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 14px 20px 10px; }
+.wiz-tabs { display: flex; gap: 6px; flex-wrap: wrap; max-height: 88px; overflow: auto; padding: 14px 20px 10px; }
+.wiz-count { color: var(--text-dim); font-size: .86em; }
+.wiz-count b { color: var(--accent); font-size: 1.08em; }
+.wiz-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 20px 18px; }
+.wiz-empty { padding: 34px 0; text-align: center; }
+.wiz-ghead { display: flex; align-items: center; gap: 8px; margin: 14px 0 8px; font-size: .88em; color: var(--text-dim); font-weight: 600; }
+.wiz-ghead .wt { color: var(--text); }
+.wiz-list { display: flex; flex-direction: column; gap: 6px; }
+.wiz-item {
+  display: flex; align-items: center; gap: 11px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2);
+  cursor: pointer; transition: border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.wiz-item:hover { border-color: var(--border-strong); }
+.wiz-item.on { border-color: var(--accent); background: var(--accent-soft); }
+.wiz-item .wi-check { flex: none; width: 16px; height: 16px; accent-color: var(--accent); pointer-events: none; }
+.wi-main { flex: 1; min-width: 0; }
+.wi-name { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.wi-n { font-weight: 600; font-size: .95em; }
+.wi-sub { margin-top: 3px; font-size: .78em; color: var(--text-dim); }
+.wi-meta { flex: none; font-size: .78em; color: var(--text-dim); text-align: right; }
+.wi-del {
+  flex: none; width: 26px; height: 26px; border: 0; border-radius: 7px; cursor: pointer;
+  background: transparent; color: var(--text-dim); opacity: .38; transition: all var(--dur) var(--ease);
+}
+/* 常驻可见（只是淡一点）—— 藏到 hover 里用户根本发现不了「能删」 */
+.wiz-item:hover .wi-del { opacity: 1; }
+.wi-del:hover { background: var(--surface-3); color: #e5484d; }
+.wiz-foot { display: flex; align-items: center; gap: 10px; flex: none; padding: 13px 20px; border-top: 1px solid var(--border); }
+.wiz-foot .sub { color: var(--text-dim); font-size: .86em; }
+.wiz-tools .grow, .wiz-ghead .grow, .wiz-foot .grow, .wiz-prog .grow { flex: 1; }
+.link-btn { border: 0; background: transparent; color: var(--accent); cursor: pointer; font-size: .92em; padding: 2px 5px; border-radius: 6px; }
+.link-btn:hover { background: var(--accent-soft); }
+
+/* 向导 ③：逐款自定义 */
+.wtab {
+  max-width: 220px; padding: 5px 11px; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--surface-2); color: var(--text-dim); cursor: pointer;
+  font-size: .86em; line-height: 1.45;      /* 别低于 12px 档：再小汉字就糊成一团 */
+  /* ⚠️ 下面几行是修「名字太长就糊出框外、盖住隔壁标签」的关键：
+     flex 子项默认 min-width:auto 不会收缩，父级不裁剪的话 text-overflow 根本不生效；
+     再叠一句 max-width，长名字才会变成「名字… ×」而不是把整行撑破 */
+  display: inline-flex; align-items: center; gap: 6px; overflow: hidden; min-width: 0;
+}
+.wtab > .ellipsis { min-width: 0; flex: 0 1 auto; }   /* 允许被压缩，省略号才会出现 */
+.wtab .x {
+  flex: 0 0 auto; display: inline-grid; place-items: center; width: 16px; height: 16px;
+  border-radius: 50%; font-size: 1.05em; line-height: 1; opacity: .55;
+}
+.wtab .x:hover { background: var(--danger, #e5484d); color: #fff; opacity: 1; }
+.wtab:hover { border-color: var(--border-strong); color: var(--text); }
+.wtab.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.wiz-prog { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: .86em; color: var(--text-dim); }
+.wiz-prog .wp-i { font-weight: 600; color: var(--text); }
+.wiz-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 2px; }
+/* 与全局 .chip 同一套圆角 / 内距，不然这里是一排直角方块、跟整体风格对不上 */
+.cat-chip {
+  border: 1px solid var(--border); background: var(--surface-2); cursor: pointer;
+  border-radius: 999px; padding: 4px 12px;
+  font-size: .86em; line-height: 1.5;        /* 跟 .chip 同档，汉字才不会发虚 */
+  color: var(--text-dim); transition: all var(--dur) var(--ease);
+}
+.cat-chip:hover { border-color: var(--accent); color: var(--accent); }
+.cat-chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+/* 「18+」：勾上就等于把这款放进隐藏空间，所以用警示色区分于普通分类 */
+.cat-chip.adult { border-color: color-mix(in srgb, var(--danger, #e5484d) 45%, var(--border)); color: var(--danger, #e5484d); }
+.cat-chip.adult:hover { border-color: var(--danger, #e5484d); }
+.cat-chip.adult.on { border-color: var(--danger, #e5484d); background: color-mix(in srgb, var(--danger, #e5484d) 16%, transparent); color: var(--danger, #e5484d); }

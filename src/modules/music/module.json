@@ -1,0 +1,12 @@
+{
+  "id": "music",
+  "route": "#/music",
+  "title": "音乐",
+  "desc": "本地音乐 · 播放 · 下载",
+  "icon": "music",
+  "accent": "#c20c0c",
+  "order": 3,
+  "detail": "本地曲库、歌单、歌词页、听歌足迹，以及每日推荐与下载。",
+  "builtin": true,
+  "channels": ["music:"]
+}

@@ -1,0 +1,232 @@
+/* ============================================================
+   拾光集 · 图片模块 (photos.css)
+   第五十七轮新增。
+   布局沿用游戏模块的 .games / .gside / .gmain（两边都是「左列表 + 右内容」，
+   复制一份只会让两处慢慢长歪），这里只写图片模块**自己的**东西：
+   工具行 / 图片墙 / 足迹地图 / 大图查看器 / 标坐标表单。
+   ============================================================ */
+
+/* ---------------- 左栏 ---------------- */
+.photos .ph-side-act { display: flex; gap: 8px; padding: 10px 12px; }
+.photos .ph-side-act .btn { flex: 1; justify-content: center; }
+.photos .ph-side-act .btn.is-busy { opacity: .6; }
+
+.photos .ph-root {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: 8px; cursor: default;
+}
+.photos .ph-root:hover { background: var(--surface-3, rgba(127,127,127,.08)); }
+.photos .ph-root > svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--text-mute); }
+.photos .ph-root-m { min-width: 0; flex: 1; }
+.photos .ph-root-n { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photos .ph-root-s { font-size: 11px; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photos .ph-root-x {
+  border: 0; background: transparent; color: var(--text-mute); cursor: pointer;
+  padding: 2px; border-radius: 5px; line-height: 0; opacity: 0; transition: opacity .15s;
+}
+.photos .ph-root:hover .ph-root-x { opacity: 1; }
+.photos .ph-root-x:hover { background: var(--danger-bg, rgba(200,40,40,.14)); color: var(--danger, #d33); }
+.photos .ph-root-x svg { width: 13px; height: 13px; }
+
+.photos .ph-stat {
+  border-top: 1px solid var(--border); padding: 10px 12px; margin-top: auto;
+  display: flex; flex-direction: column; gap: 5px; font-size: 12px;
+}
+.photos .ph-stat-l { display: flex; align-items: center; gap: 6px; }
+.photos .ph-stat-l b { font-size: 15px; }
+.photos .ph-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; }
+.photos .ph-dot.exif { background: var(--accent); }
+.photos .ph-dot.manual { background: #2f9e6f; }
+
+/* ---------------- 右栏工具行 ---------------- */
+.photos .ph-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.photos .ph-tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 9px; }
+.photos .ph-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; color: var(--text-mute);
+  padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.photos .ph-tab svg { width: 15px; height: 15px; }
+.photos .ph-tab.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.photos .ph-bar-right { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.photos .ph-bar-right > svg { width: 15px; height: 15px; color: var(--text-mute); flex: 0 0 15px; }
+.photos .ph-kw, .photos .ph-sel {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 9px; color: var(--text); font-size: 13px;
+}
+.photos .ph-kw { flex: 1; min-width: 80px; max-width: 260px; }
+.photos .ph-sel { flex: 0 0 auto; }
+
+.photos .ph-prog {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 16px 0; font-size: 12px; color: var(--text-mute);
+}
+.photos .ph-prog .ph-prog-bar {
+  height: 3px; width: 38%; background: var(--accent); border-radius: 2px;
+  animation: ph-slide 1.1s ease-in-out infinite; flex: 0 0 38%;
+}
+@keyframes ph-slide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+
+/* ---------------- 图片墙 ---------------- */
+.photos .ph-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+.photos .ph-day { margin-bottom: 14px; }
+/* ⚠️ sticky 的日期条一定要 `display:inline-block` —— 块级的话背景会横贯整行，
+   看着像一条「空表格行」而不是日期标签（试出来的，不是猜的） */
+.photos .ph-day-t {
+  display: inline-block;
+  font-size: 12px; color: var(--text-mute); font-weight: 600;
+  padding: 4px 10px 4px 0; margin-bottom: 6px;
+  position: sticky; top: -14px; background: var(--surface); z-index: 2;
+}
+.photos .ph-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.photos .ph-card {
+  width: 148px; border-radius: 10px; overflow: hidden; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  position: relative; transition: transform .16s ease, box-shadow .16s ease;
+}
+.photos .ph-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.16); }
+.photos .ph-thumb {
+  width: 100%; height: 108px; background: var(--surface-3, rgba(127,127,127,.1));
+  display: flex; align-items: center; justify-content: center; overflow: hidden;
+}
+.photos .ph-thumb img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s; }
+.photos .ph-thumb img.on { opacity: 1; }
+.photos .ph-thumb img.bad { opacity: 1; }
+.photos .ph-badge {
+  position: absolute; left: 6px; top: 6px; width: 20px; height: 20px;
+  border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent); color: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.3);
+}
+.photos .ph-badge.manual { background: #2f9e6f; }
+.photos .ph-badge svg { width: 11px; height: 11px; }
+.photos .ph-meta { padding: 6px 8px 8px; }
+.photos .ph-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photos .ph-sub { font-size: 11px; color: var(--text-mute); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photos .ph-edit {
+  position: absolute; right: 5px; top: 5px; width: 24px; height: 24px;
+  border: 0; border-radius: 6px; cursor: pointer; display: grid; place-items: center;
+  background: rgba(0,0,0,.45); color: #fff; opacity: 0; transition: opacity .15s;
+}
+.photos .ph-card:hover .ph-edit { opacity: 1; }
+.photos .ph-edit svg { width: 13px; height: 13px; }
+
+/* ---------------- 足迹地图 ---------------- */
+.photos .ph-map-bar {
+  display: flex; align-items: center; gap: 10px; padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.photos .ph-sw { display: flex; background: var(--surface-2); padding: 3px; border-radius: 9px; }
+.photos .ph-sw-b {
+  border: 0; background: transparent; color: var(--text-mute); cursor: pointer;
+  padding: 5px 14px; border-radius: 7px; font-size: 13px;
+}
+.photos .ph-sw-b.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.photos .ph-map-hint { font-size: 12px; color: var(--text-mute); flex: 1; min-width: 0; }
+
+/* 地图容器：必须给显式高度，Canvas 没有内容高度可言（不给就是一片空白） */
+.photos .ph-map { position: relative; height: 440px; min-height: 320px; margin: 12px 16px; }
+.pm-wrap {
+  position: absolute; inset: 0; border-radius: 12px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.pm-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.pm-canvas.grabbing { cursor: grabbing; }
+.pm-canvas.pointing { cursor: pointer; }
+.pm-tip {
+  position: absolute; z-index: 6; pointer-events: none;
+  background: rgba(20,22,28,.9); color: #fff; font-size: 12px;
+  padding: 4px 8px; border-radius: 6px; max-width: 220px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pm-attr {
+  position: absolute; right: 8px; bottom: 6px; z-index: 5;
+  font-size: 11px; color: var(--text-mute);
+  background: var(--surface); padding: 2px 6px; border-radius: 5px;
+}
+.pm-ctrl {
+  position: absolute; right: 10px; top: 10px; z-index: 5;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.pm-btn {
+  width: 30px; height: 30px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text); border-radius: 7px; cursor: pointer; font-size: 16px; line-height: 1;
+}
+.pm-btn:hover { background: var(--surface-2); }
+.pm-btn.pm-btn-txt { font-size: 11px; }
+
+/* 没坐标的照片：一排可点的缩略图 */
+.photos .ph-miss { padding: 0 16px 20px; }
+.photos .ph-miss-t { display: flex; align-items: baseline; gap: 8px; font-size: 13px; margin-bottom: 8px; }
+.photos .ph-miss-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.photos .ph-miss-i {
+  flex: 0 0 auto; width: 78px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); padding: 0; overflow: hidden; cursor: pointer;
+}
+.photos .ph-miss-i img { width: 100%; height: 54px; object-fit: cover; display: block; opacity: 0; transition: opacity .2s; }
+.photos .ph-miss-i img.on { opacity: 1; }
+.photos .ph-miss-n {
+  font-size: 10px; padding: 3px 4px; color: var(--text-mute);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block;
+}
+
+/* ---------------- 大图查看器 / 标坐标 ---------------- */
+.pv-layer {
+  position: fixed; inset: 0; z-index: 90; display: grid; place-items: center;
+  background: rgba(0,0,0,.62); backdrop-filter: blur(3px); padding: 24px;
+}
+.pv-layer[hidden] { display: none; }
+.pv-box {
+  background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
+  box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: min(1000px, 92vw);
+  max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
+}
+.pv-head {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.pv-title { font-size: 14px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.pv-head-r { display: flex; align-items: center; gap: 6px; }
+.pv-x { border: 0; background: transparent; color: var(--text-mute); cursor: pointer; padding: 4px; border-radius: 6px; line-height: 0; }
+.pv-x:hover { background: var(--surface-2); color: var(--text); }
+.pv-x svg { width: 15px; height: 15px; }
+.pv-img { flex: 1; min-height: 0; display: grid; place-items: center; background: rgba(0,0,0,.35); overflow: hidden; }
+.pv-img img { max-width: 100%; max-height: 62vh; object-fit: contain; display: block; }
+.pv-foot {
+  display: flex; align-items: center; gap: 8px; padding: 8px 14px;
+  border-top: 1px solid var(--border);
+}
+.pv-idx { font-size: 12px; color: var(--text-mute); min-width: 68px; text-align: center; }
+.pv-info { padding: 8px 14px 12px; font-size: 12px; color: var(--text-mute); border-top: 1px solid var(--border); }
+
+/* 聚合气泡点开的一屏小图 */
+.pv-cluster { width: min(720px, 92vw); }
+.pv-grid { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 14px; overflow: auto; }
+.pv-gi {
+  width: 118px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); padding: 0; overflow: hidden; cursor: pointer;
+}
+.pv-gi img { width: 100%; height: 82px; object-fit: cover; display: block; opacity: 0; transition: opacity .2s; }
+.pv-gi img.on { opacity: 1; }
+.pv-gn { font-size: 10px; padding: 3px 4px; display: block; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 标坐标 */
+.pv-place { width: min(620px, 92vw); }
+.pv-place-body { display: flex; gap: 14px; padding: 12px 14px; }
+.pv-place-img { flex: 0 0 148px; }
+.pv-place-img img { width: 148px; height: 108px; object-fit: cover; border-radius: 8px; background: var(--surface-2); opacity: 0; }
+.pv-place-img img.on { opacity: 1; }
+.pv-place-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.pv-place-form .hint { margin: 0; font-size: 12px; }
+.ph-row { display: flex; align-items: center; gap: 8px; }
+.ph-row .label { flex: 0 0 62px; font-size: 12px; color: var(--text-mute); }
+.ph-inp {
+  flex: 1; min-width: 0; background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 9px; color: var(--text); font-size: 13px;
+}
+.ph-inp:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.ph-col { display: flex; flex-direction: column; gap: 7px; }
+.ph-err { color: var(--danger, #d33); font-size: 12px; margin: 0; flex: 1; }

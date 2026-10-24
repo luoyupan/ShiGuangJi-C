@@ -1,0 +1,12 @@
+{
+  "id": "games",
+  "route": "#/games",
+  "title": "游戏",
+  "desc": "本地游戏库 · 平台总览 · 隐藏空间",
+  "icon": "game",
+  "accent": "#4f7cff",
+  "order": 1,
+  "detail": "扫描本机游戏、记录游玩时长、看平台总览，以及隐藏空间。",
+  "builtin": true,
+  "channels": ["games:", "platform:", "hidden:"]
+}
