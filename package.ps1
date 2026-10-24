@@ -20,7 +20,10 @@ Copy-Item (Join-Path $root "build\modules\*.dll") (Join-Path $dist "modules") -F
 Copy-Item (Join-Path $root "README.md") $dist -Force
 Copy-Item (Join-Path $root "LICENSE") $dist -Force
 Copy-Item (Join-Path $root "docs\*.md") (Join-Path $dist "docs") -Force
-Copy-Item (Join-Path $root "docs\images") (Join-Path $dist "docs\images") -Recurse -Force
+# 界面截图是可选资源（当前不含截图 —— 原截图含真实网络信息与个人数据，已撤）
+if (Test-Path (Join-Path $root "docs\images")) {
+  Copy-Item (Join-Path $root "docs\images") (Join-Path $dist "docs\images") -Recurse -Force
+}
 
 # 运行说明（纯文本，避免任何运行环境依赖）
 $readme = @"
