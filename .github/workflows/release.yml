@@ -1,0 +1,53 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (exe + modules)
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Package zip
+        shell: pwsh
+        run: ./package.ps1 -SkipBuild
+
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          $dist = "dist/ShiGuangJi-1.0.0"
+          $lines = @()
+          Get-ChildItem $dist -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | Sort-Object FullName | ForEach-Object {
+            $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            $rel = $_.FullName.Substring((Resolve-Path $dist).Path.Length + 1).Replace('\', '/')
+            $lines += "$h  $rel"
+          }
+          $zip = "dist/ShiGuangJi-1.0.0-win64.zip"
+          $zh = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          $lines += "$zh  ShiGuangJi-1.0.0-win64.zip"
+          $lines | Set-Content "dist/SHA256SUMS.txt" -Encoding ascii
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.0
+          name: 拾光集 C 版 1.0.0 · 正式版
+          body_path: docs/发布说明-v1.0.0.md
+          files: |
+            dist/ShiGuangJi-1.0.0-win64.zip
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: false
+          make_latest: true
