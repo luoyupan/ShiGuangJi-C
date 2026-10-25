@@ -626,7 +626,7 @@
 
     /* ---------------- 地点搜索 / 批量标地点 ---------------- */
     geoPicker(onPick) {
-      const q = el('input', { class: 'ph-inp', type: 'text', placeholder: '输入地名，如 上海 / 京都' });
+      const q = el('input', { class: 'ph-inp', type: 'text', placeholder: '输入地名，支持模糊，如 庐山 / 京都' });
       const label = el('span', { text: '搜索' });
       const btn = el('button', { class: 'btn btn-sm', type: 'button' }, uiSpan('search'), label);
       const out = el('div', { class: 'ph-geo-res' });
@@ -727,6 +727,12 @@
           class: 'btn btn-sm btn-primary', onclick: async () => {
             err.hidden = true;
             try {
+              if (!lat.value.trim() && !lng.value.trim() && nm.value.trim()) {
+                const list = await API.raw.photos.geocode(nm.value.trim());
+                if (!list || !list[0]) throw new Error('没找到「' + nm.value.trim() + '」，请先搜索并选一个结果');
+                lat.value = Number(list[0].lat).toFixed(5);
+                lng.value = Number(list[0].lng).toFixed(5);
+              }
               const r = await API.raw.photos.setPlaces(ids, { lat: lat.value, lng: lng.value, name: nm.value });
               window.Shell.toast(`已给 ${r.count} 张照片标上地点`, 'ok');
               this.selecting = false;
@@ -794,6 +800,12 @@
           class: 'btn btn-sm btn-primary', onclick: async () => {
             err.hidden = true;
             try {
+              if (!lat.value.trim() && !lng.value.trim() && nm.value.trim()) {
+                const list = await API.raw.photos.geocode(nm.value.trim());
+                if (!list || !list[0]) throw new Error('没找到「' + nm.value.trim() + '」，请先搜索并选一个结果');
+                lat.value = Number(list[0].lat).toFixed(5);
+                lng.value = Number(list[0].lng).toFixed(5);
+              }
               await API.raw.photos.setPlace(item.id, { lat: lat.value, lng: lng.value, name: nm.value });
               window.Shell.toast('已标上地点', 'ok');
               this.closeViewer();

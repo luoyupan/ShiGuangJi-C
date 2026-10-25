@@ -390,31 +390,72 @@ static const GeoBuiltin k_geo[] = {
   { "灵隐寺", "浙江省 · Lingyin Temple", 30.2409, 120.1012 },
   { "南京", "江苏省 · Nanjing", 32.0603, 118.7969 },
   { "苏州", "江苏省 · Suzhou", 31.2989, 120.5853 },
+  { "周庄", "江苏省 · Zhouzhuang", 31.1100, 120.8500 },
+  { "同里", "江苏省 · Tongli", 31.1500, 120.7200 },
+  { "南浔", "浙江省 · Nanxun", 30.8800, 120.4300 },
   { "成都", "四川省 · Chengdu", 30.5728, 104.0668 },
   { "宽窄巷子", "四川省 · Kuanzhai Alley", 30.6690, 104.0550 },
   { "武汉", "湖北省 · Wuhan", 30.5928, 114.3055 },
+  { "宜昌", "湖北省 · Yichang", 30.6910, 111.2860 },
+  { "三峡大坝", "湖北省 · Three Gorges Dam", 30.8230, 111.0030 },
+  { "恩施", "湖北省 · Enshi", 30.2720, 109.4880 },
+  { "神农架", "湖北省 · Shennongjia", 31.7450, 110.6750 },
+  { "武当山", "湖北省 · Wudangshan", 32.4000, 111.0040 },
   { "西安", "陕西省 · Xi'an", 34.3416, 108.9398 },
   { "兵马俑", "陕西省 · Terracotta Army", 34.3841, 109.2785 },
   { "大雁塔", "陕西省 · Giant Wild Goose Pagoda", 34.2189, 108.9640 },
   { "长沙", "湖南省 · Changsha", 28.2282, 112.9388 },
+  { "岳阳", "湖南省 · Yueyang", 29.3570, 113.1290 },
+  { "岳阳楼", "湖南省 · Yueyang Tower", 29.3830, 113.0960 },
+  { "衡山", "湖南省 · Mount Heng", 27.2500, 112.7300 },
+  { "韶山", "湖南省 · Shaoshan", 27.9100, 112.5300 },
+  { "洞庭湖", "湖南省 · Dongting Lake", 29.3000, 112.9500 },
   { "郑州", "河南省 · Zhengzhou", 34.7466, 113.6254 },
   { "济南", "山东省 · Jinan", 36.6512, 117.1201 },
   { "青岛", "山东省 · Qingdao", 36.0671, 120.3826 },
+  { "蓬莱阁", "山东省 · Penglai Pavilion", 37.8300, 120.7600 },
+  { "威海", "山东省 · Weihai", 37.5100, 122.1200 },
+  { "烟台", "山东省 · Yantai", 37.4600, 121.4400 },
+  { "日照", "山东省 · Rizhao", 35.4200, 119.5300 },
   { "大连", "辽宁省 · Dalian", 38.9140, 121.6147 },
   { "沈阳", "辽宁省 · Shenyang", 41.8057, 123.4315 },
   { "哈尔滨", "黑龙江省 · Harbin", 45.8038, 126.5350 },
+  { "镜泊湖", "黑龙江省 · Jingpo Lake", 43.9000, 128.9000 },
+  { "五大连池", "黑龙江省 · Wudalianchi", 48.7000, 126.1000 },
+  { "漠河", "黑龙江省 · Mohe", 52.9700, 122.5300 },
+  { "长白山", "吉林省 · Changbai Mountain", 42.0000, 128.0600 },
   { "长春", "吉林省 · Changchun", 43.8171, 125.3235 },
+  { "呼伦贝尔", "内蒙古 · Hulunbuir", 49.2100, 119.7600 },
+  { "阿尔山", "内蒙古 · Arxan", 47.1800, 119.9400 },
+  { "额济纳胡杨林", "内蒙古 · Ejina Poplar Forest", 41.9600, 101.0700 },
   { "石家庄", "河北省 · Shijiazhuang", 38.0428, 114.5149 },
+  { "承德避暑山庄", "河北省 · Chengde Mountain Resort", 40.9900, 117.9400 },
+  { "北戴河", "河北省 · Beidaihe", 39.8300, 119.4800 },
+  { "白洋淀", "河北省 · Baiyangdian", 38.9300, 115.9900 },
   { "太原", "山西省 · Taiyuan", 37.8706, 112.5489 },
   { "呼和浩特", "内蒙古 · Hohhot", 40.8426, 111.7492 },
   { "乌鲁木齐", "新疆 · Urumqi", 43.8256, 87.6168 },
+  { "天山天池", "新疆 · Tianchi Lake", 43.8900, 88.1200 },
+  { "喀纳斯", "新疆 · Kanas", 48.7000, 87.0000 },
+  { "赛里木湖", "新疆 · Sayram Lake", 44.6000, 81.2000 },
+  { "那拉提", "新疆 · Nalati", 43.3000, 84.0000 },
+  { "喀什古城", "新疆 · Kashgar", 39.4700, 75.9900 },
   { "拉萨", "西藏 · Lhasa", 29.6520, 91.1721 },
+  { "大昭寺", "西藏 · Jokhang Temple", 29.6530, 91.1320 },
+  { "纳木错", "西藏 · Namtso", 30.7000, 90.6000 },
+  { "羊卓雍措", "西藏 · Yamdrok Lake", 28.9500, 90.7000 },
   { "布达拉宫", "西藏 · Potala Palace", 29.6570, 91.1170 },
   { "西宁", "青海省 · Xining", 36.6171, 101.7782 },
+  { "青海湖", "青海省 · Qinghai Lake", 36.9000, 100.2000 },
+  { "茶卡盐湖", "青海省 · Chaka Salt Lake", 36.7000, 99.0800 },
   { "兰州", "甘肃省 · Lanzhou", 36.0611, 103.8343 },
   { "银川", "宁夏 · Yinchuan", 38.4872, 106.2309 },
   { "昆明", "云南省 · Kunming", 25.0389, 102.7183 },
   { "贵阳", "贵州省 · Guiyang", 26.6470, 106.6302 },
+  { "黄果树瀑布", "贵州省 · Huangguoshu Falls", 25.9900, 105.6670 },
+  { "荔波小七孔", "贵州省 · Libo Xiaoqikong", 25.4120, 107.8790 },
+  { "梵净山", "贵州省 · Fanjingshan", 27.9100, 108.6900 },
+  { "镇远古镇", "贵州省 · Zhenyuan", 27.0500, 108.4250 },
   { "南宁", "广西 · Nanning", 22.8170, 108.3665 },
   { "海口", "海南省 · Haikou", 20.0440, 110.1999 },
   { "三亚", "海南省 · Sanya", 18.2528, 109.5119 },
@@ -422,8 +463,26 @@ static const GeoBuiltin k_geo[] = {
   { "厦门", "福建省 · Xiamen", 24.4798, 118.0894 },
   { "鼓浪屿", "福建省 · Gulangyu", 24.4470, 118.0670 },
   { "南昌", "江西省 · Nanchang", 28.6820, 115.8579 },
+  { "九江", "江西省 · Jiujiang", 29.7051, 116.0019 },
+  { "庐山", "江西省九江市 · Mount Lu / Lushan", 29.5581, 115.9820 },
+  { "庐山风景区", "江西省九江市 · Lushan Scenic Area", 29.5581, 115.9820 },
+  { "三叠泉", "江西省九江市 · Sandie Spring", 29.5500, 115.9900 },
+  { "景德镇", "江西省 · Jingdezhen", 29.2687, 117.1784 },
+  { "婺源", "江西省 · Wuyuan", 29.2480, 117.8610 },
+  { "三清山", "江西省 · Sanqingshan", 28.9150, 118.0700 },
+  { "龙虎山", "江西省 · Longhushan", 28.1200, 116.9800 },
+  { "井冈山", "江西省 · Jinggangshan", 26.7450, 114.1600 },
   { "合肥", "安徽省 · Hefei", 31.8206, 117.2272 },
+  { "九华山", "安徽省 · Jiuhuashan", 30.4770, 117.8050 },
+  { "天柱山", "安徽省 · Tianzhushan", 30.7330, 116.4590 },
+  { "宏村", "安徽省 · Hongcun", 30.0030, 117.9860 },
+  { "西递", "安徽省 · Xidi", 29.9050, 117.9870 },
   { "宁波", "浙江省 · Ningbo", 29.8683, 121.5440 },
+  { "千岛湖", "浙江省 · Qiandao Lake", 29.6050, 119.0420 },
+  { "普陀山", "浙江省 · Putuoshan", 30.0090, 122.3860 },
+  { "雁荡山", "浙江省 · Yandangshan", 28.3720, 121.0570 },
+  { "乌镇", "浙江省 · Wuzhen", 30.7450, 120.4870 },
+  { "西塘", "浙江省 · Xitang", 30.9430, 120.8850 },
   { "温州", "浙江省 · Wenzhou", 27.9949, 120.6994 },
   { "无锡", "江苏省 · Wuxi", 31.4912, 120.3119 },
   { "常州", "江苏省 · Changzhou", 31.8107, 119.9741 },
@@ -442,19 +501,34 @@ static const GeoBuiltin k_geo[] = {
   { "惠州", "广东省 · Huizhou", 23.1115, 114.4161 },
   { "汕头", "广东省 · Shantou", 23.3541, 116.6819 },
   { "泉州", "福建省 · Quanzhou", 24.8741, 118.6757 },
+  { "武夷山", "福建省 · Wuyishan", 27.7560, 118.0350 },
+  { "太姥山", "福建省 · Taimushan", 27.1000, 120.2000 },
+  { "湄洲岛", "福建省 · Meizhou Island", 25.0900, 119.1200 },
   { "莆田", "福建省 · Putian", 25.4541, 119.0078 },
   { "桂林", "广西 · Guilin", 25.2736, 110.2900 },
+  { "漓江", "广西 · Li River", 25.2000, 110.4500 },
   { "阳朔", "广西 · Yangshuo", 24.7785, 110.4966 },
+  { "龙脊梯田", "广西 · Longji Rice Terraces", 25.7500, 110.1000 },
+  { "涠洲岛", "广西 · Weizhou Island", 21.0400, 109.1000 },
   { "张家界", "湖南省 · Zhangjiajie", 29.1170, 110.4792 },
   { "张家界国家森林公园", "湖南省 · Zhangjiajie Forest Park", 29.3150, 110.4340 },
   { "凤凰古城", "湖南省 · Fenghuang", 27.9480, 109.5990 },
   { "黄山", "安徽省 · Huangshan", 29.7147, 118.3376 },
   { "黄山风景区", "安徽省 · Huangshan Scenic Area", 30.1330, 118.1670 },
   { "丽江", "云南省 · Lijiang", 26.8721, 100.2299 },
+  { "泸沽湖", "云南省 · Lugu Lake", 27.7000, 100.7800 },
+  { "玉龙雪山", "云南省 · Jade Dragon Snow Mountain", 27.1000, 100.1800 },
+  { "梅里雪山", "云南省 · Meili Snow Mountain", 28.4500, 98.6800 },
+  { "腾冲", "云南省 · Tengchong", 25.0200, 98.4900 },
+  { "元阳梯田", "云南省 · Yuanyang Rice Terraces", 23.1000, 102.7500 },
   { "大理", "云南省 · Dali", 25.6065, 100.2676 },
   { "香格里拉", "云南省 · Shangri-La", 27.8268, 99.7009 },
   { "西双版纳", "云南省 · Xishuangbanna", 22.0017, 100.7979 },
   { "九寨沟", "四川省 · Jiuzhaigou", 33.2600, 103.9186 },
+  { "稻城亚丁", "四川省 · Daocheng Yading", 28.4500, 100.3300 },
+  { "四姑娘山", "四川省 · Siguniang Mountain", 31.0800, 102.9000 },
+  { "色达", "四川省 · Seda", 32.2700, 100.3300 },
+  { "若尔盖", "四川省 · Zoige", 33.5800, 102.9600 },
   { "峨眉山", "四川省 · Emeishan", 29.6012, 103.4845 },
   { "乐山", "四川省 · Leshan", 29.5521, 103.7656 },
   { "都江堰", "四川省 · Dujiangyan", 31.0026, 103.6172 },
@@ -463,10 +537,17 @@ static const GeoBuiltin k_geo[] = {
   { "洛阳", "河南省 · Luoyang", 34.6197, 112.4540 },
   { "开封", "河南省 · Kaifeng", 34.7972, 114.3076 },
   { "大同", "山西省 · Datong", 40.0768, 113.3001 },
+  { "云冈石窟", "山西省 · Yungang Grottoes", 40.1100, 113.1200 },
+  { "悬空寺", "山西省 · Hanging Temple", 39.6600, 113.7000 },
+  { "五台山", "山西省 · Wutaishan", 39.0000, 113.5900 },
+  { "壶口瀑布", "山西省 · Hukou Falls", 36.1500, 110.4400 },
   { "平遥", "山西省 · Pingyao", 37.1896, 112.1749 },
   { "敦煌", "甘肃省 · Dunhuang", 40.1421, 94.6619 },
   { "莫高窟", "甘肃省 · Mogao Caves", 40.0420, 94.8090 },
+  { "鸣沙山月牙泉", "甘肃省 · Crescent Lake", 40.0900, 94.6800 },
   { "张掖", "甘肃省 · Zhangye", 38.9259, 100.4498 },
+  { "张掖丹霞", "甘肃省 · Zhangye Danxia", 38.9500, 100.1000 },
+  { "嘉峪关", "甘肃省 · Jiayuguan", 39.8000, 98.2900 },
   { "酒泉", "甘肃省 · Jiuquan", 39.7325, 98.4943 },
   { "格尔木", "青海省 · Golmud", 36.4064, 94.9033 },
   { "林芝", "西藏 · Nyingchi", 29.6489, 94.3615 },
@@ -564,18 +645,109 @@ static void geo_add(cJSON *arr, const char *name, const char *addr, double lat, 
   cJSON_AddStringToObject(o, "source", source ? source : "offline");
   cJSON_AddItemToArray(arr, o);
 }
-static void geo_offline(cJSON *arr, const char *q) {
+static int u8_len(unsigned char c) {
+  if (c >= 0xF0) return 4;
+  if (c >= 0xE0) return 3;
+  if (c >= 0xC0) return 2;
+  return 1;
+}
+/* 查询里的每个字都在名字里出现过（顺序不严）→ 允许「庐山景区」命中「庐山风景区」 */
+static int geo_subseq(const char *q, const char *name) {
+  const char *p = q;
+  int total = 0;
+  while (*p) {
+    int l = u8_len((unsigned char)*p);
+    const char *s = name;
+    int found = 0;
+    while (*s) {
+      int sl = u8_len((unsigned char)*s);
+      if (sl == l && !memcmp(s, p, (size_t)l)) { found = 1; break; }
+      s += sl;
+    }
+    if (!found) return 0;
+    total++; p += l;
+  }
+  return total >= 2;
+}
+static int u8_decode(const char *s, unsigned int *cp, int max) {
+  int n = 0;
+  const unsigned char *p = (const unsigned char *)s;
+  while (*p && n < max) {
+    unsigned int c = *p;
+    int l = 1;
+    if (c >= 0xF0) { c &= 0x07; l = 4; }
+    else if (c >= 0xE0) { c &= 0x0F; l = 3; }
+    else if (c >= 0xC0) { c &= 0x1F; l = 2; }
+    for (int i = 1; i < l; i++) {
+      if (!p[i]) { l = i; break; }
+      c = (c << 6) | (p[i] & 0x3F);
+    }
+    cp[n++] = c;
+    p += l;
+  }
+  return n;
+}
+/* 允许一个字的错别字 / 多字少字：芦山 → 庐山，北就 → 北京 */
+static int geo_edit1(const char *q, const char *name) {
+  unsigned int a[32], b[32];
+  int na = u8_decode(q, a, 32), nb = u8_decode(name, b, 32);
+  /* 两个字的查询做“错一个字”会太宽（芦山→衡山/韶山/庐山…），只对 3 字以上启用 */
+  if (na < 3 || nb < 3 || abs(na - nb) > 1) return 0;
+  if (na == nb) {
+    int diff = 0;
+    for (int i = 0; i < na; i++) if (a[i] != b[i]) diff++;
+    return diff == 1;
+  }
+  const unsigned int *sm = na < nb ? a : b, *lg = na < nb ? b : a;
+  int ns = na < nb ? na : nb, nl = na < nb ? nb : na;
+  int i = 0, j = 0, diff = 0;
+  while (i < ns && j < nl) {
+    if (sm[i] == lg[j]) { i++; j++; }
+    else { diff++; j++; if (diff > 1) return 0; }
+  }
+  if (j < nl) diff++;
+  return diff == 1;
+}
+typedef struct { int score; int idx; } GeoHit;
+static int geo_hit_cmp(const void *a, const void *b) {
+  const GeoHit *x = (const GeoHit *)a, *y = (const GeoHit *)b;
+  if (y->score != x->score) return y->score - x->score;
+  /* 同分时短名字优先：lushan 应该先回「庐山」而不是「庐山风景区」 */
+  return (int)strlen(k_geo[x->idx].name) - (int)strlen(k_geo[y->idx].name);
+}
+static int geo_text_score(const char *ql, const char *name, const char *addr) {
+  char *n = str_lower(name), *a = str_lower(addr);
+  size_t qn = strlen(ql);
+  int score = 0;
+  if (!strcmp(n, ql)) score = 100;
+  else if (!strncmp(n, ql, qn)) score = 85;
+  else if (strstr(n, ql)) score = 70;
+  else if (strstr(a, ql)) score = 50;
+  else if (geo_edit1(ql, n)) score = 35;
+  else if (geo_subseq(ql, n)) score = 30;
+  free(n); free(a);
+  return score;
+}
+/* 返回最高匹配分，0 表示一个都没有；调用方据此决定要不要联网 */
+static int geo_offline(cJSON *arr, const char *q) {
   char *low = str_lower(q);
+  int count = (int)(sizeof(k_geo) / sizeof(k_geo[0]));
+  GeoHit *hits = (GeoHit *)xmalloc(sizeof(GeoHit) * (size_t)count);
+  int n = 0;
+  for (int i = 0; i < count; i++) {
+    int s = geo_text_score(low, k_geo[i].name, k_geo[i].addr);
+    if (s > 0) { hits[n].score = s; hits[n].idx = i; n++; }
+  }
+  qsort(hits, (size_t)n, sizeof(GeoHit), geo_hit_cmp);
   int added = 0;
-  for (int i = 0; i < (int)(sizeof(k_geo) / sizeof(k_geo[0])) && added < 6; i++) {
-    char *n = str_lower(k_geo[i].name), *a = str_lower(k_geo[i].addr);
-    int hit = strstr(n, low) || strstr(a, low);
-    free(n); free(a);
-    if (!hit) continue;
-    geo_add(arr, k_geo[i].name, k_geo[i].addr, k_geo[i].lat, k_geo[i].lng, "离线");
+  for (int i = 0; i < n && added < 8; i++) {
+    int k = hits[i].idx;
+    geo_add(arr, k_geo[k].name, k_geo[k].addr, k_geo[k].lat, k_geo[k].lng, "离线");
     added++;
   }
-  free(low);
+  int top = n ? hits[0].score : 0;
+  free(hits); free(low);
+  return top;
 }
 static void geo_nominatim(cJSON *arr, const char *q) {
   char *enc = url_encode(q);
@@ -643,9 +815,9 @@ static int photos_geocode(cJSON *args, char **out_json, char **out_error) {
   while (n && (s[n - 1] == ' ' || s[n - 1] == '\t')) s[--n] = 0;
   if (!*s) { *out_error = mod_ret_error("先输入一个地点名，比如：上海 / 京都"); return -1; }
   cJSON *arr = cJSON_CreateArray();
-  geo_offline(arr, s);
-  /* 常见地名直接离线命中，不联网等 7 秒；表里没有才查天地图 / OSM */
-  if (!cJSON_GetArraySize(arr)) {
+  int top = geo_offline(arr, s);
+  /* 常见地名 / 模糊命中直接离线返回，不联网等 7 秒；完全没命中才查天地图 / OSM */
+  if (top < 30) {
     cJSON *st = P_state_root();
     cJSON *map = cJSON_GetObjectItemCaseSensitive(st, "map");
     const char *tk = map ? json_str(map, "tk", "") : "";
