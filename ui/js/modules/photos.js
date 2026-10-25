@@ -552,6 +552,74 @@
     openViewer(item) {
       const layer = this.layer();
       const idx = this.shown.findIndex((x) => String(x.id) === String(item.id));
+      const img = el('img', { src: toFileUrl(item.path), alt: item.name });
+      img.draggable = false;
+      const imgWrap = el('div', { class: 'pv-img', title: '滚轮缩放 · 拖动查看细节 · 双击复位' }, img);
+      const zoomEl = el('span', { class: 'pv-zoom', text: '100%', title: '双击图片或点这里复位' });
+      const state = { scale: 1, tx: 0, ty: 0 };
+      let dragging = false, drag = null;
+
+      const clampPan = () => {
+        const mx = imgWrap.clientWidth * (state.scale - 1) / 2;
+        const my = imgWrap.clientHeight * (state.scale - 1) / 2;
+        state.tx = Math.max(-mx, Math.min(mx, state.tx));
+        state.ty = Math.max(-my, Math.min(my, state.ty));
+      };
+      const apply = () => {
+        img.style.transform = state.scale === 1 ? 'none'
+          : `translate3d(${state.tx.toFixed(1)}px, ${state.ty.toFixed(1)}px, 0) scale(${state.scale.toFixed(4)})`;
+        zoomEl.textContent = Math.round(state.scale * 100) + '%';
+        imgWrap.classList.toggle('zoomed', state.scale > 1);
+        imgWrap.style.cursor = state.scale > 1 ? (dragging ? 'grabbing' : 'grab') : 'zoom-in';
+      };
+      const resetZoom = () => {
+        state.scale = 1; state.tx = 0; state.ty = 0;
+        apply();
+      };
+
+      /* 滚轮以鼠标位置为中心缩放，最大 8 倍 */
+      imgWrap.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const old = state.scale;
+        const next = Math.max(1, Math.min(8, old * Math.exp(-e.deltaY * 0.0016)));
+        if (next === old) return;
+        const rect = imgWrap.getBoundingClientRect();
+        const mx = e.clientX - rect.left - rect.width / 2;
+        const my = e.clientY - rect.top - rect.height / 2;
+        state.tx = mx - (mx - state.tx) * (next / old);
+        state.ty = my - (my - state.ty) * (next / old);
+        state.scale = next;
+        if (next === 1) { state.tx = 0; state.ty = 0; }
+        clampPan(); apply();
+      }, { passive: false });
+
+      /* 放大后按住拖动看边角 */
+      imgWrap.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || state.scale <= 1) return;
+        e.preventDefault();
+        dragging = true;
+        drag = { x: e.clientX, y: e.clientY, tx: state.tx, ty: state.ty };
+        try { imgWrap.setPointerCapture(e.pointerId); } catch { /* 不支持就算了 */ }
+        apply();
+      });
+      imgWrap.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        state.tx = drag.tx + (e.clientX - drag.x);
+        state.ty = drag.ty + (e.clientY - drag.y);
+        clampPan(); apply();
+      });
+      const endDrag = (e) => {
+        if (!drag) return;
+        drag = null; dragging = false;
+        try { imgWrap.releasePointerCapture(e.pointerId); } catch { /* 已释放 */ }
+        apply();
+      };
+      imgWrap.addEventListener('pointerup', endDrag);
+      imgWrap.addEventListener('pointercancel', endDrag);
+
+      imgWrap.addEventListener('dblclick', (e) => { e.preventDefault(); resetZoom(); });
+      zoomEl.onclick = resetZoom;
+
       const box = el('div', { class: 'pv-box pv-viewer' },
         el('div', { class: 'pv-head' },
           el('span', { class: 'pv-title', text: item.name }),
@@ -559,15 +627,17 @@
             el('button', { class: 'btn btn-sm btn-ghost', onclick: () => this.editPlace(item) }, uiSpan('pin'), '标地点'),
             el('button', { class: 'btn btn-sm btn-ghost', onclick: () => API.raw.photos.reveal(item.path).catch(() => {}) }, uiSpan('folder'), '在文件夹里显示'),
             el('button', { class: 'pv-x', onclick: () => this.closeViewer() }, uiSpan('close')))),
-        el('div', { class: 'pv-img' }, el('img', { src: toFileUrl(item.path), alt: item.name })),
+        imgWrap,
         el('div', { class: 'pv-foot' },
           el('button', { class: 'btn btn-sm', onclick: () => this.step(-1) }, uiSpan('prev')),
           el('span', { class: 'pv-idx', text: (idx >= 0 ? idx + 1 : '—') + ' / ' + this.shown.length }),
+          zoomEl,
           el('button', { class: 'btn btn-sm', onclick: () => this.step(1) }, uiSpan('next'))),
-        el('div', { class: 'pv-info', text: this.infoOf(item) }));
+        el('div', { class: 'pv-info', text: this.infoOf(item) + ' · 滚轮缩放 / 拖动查看' }));
       layer.appendChild(box);
       layer.onclick = (e) => { if (e.target === layer) this.closeViewer(); };
       this._cur = idx;
+      resetZoom();
     },
 
     infoOf(item) {
