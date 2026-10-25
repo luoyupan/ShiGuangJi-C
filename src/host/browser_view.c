@@ -18,6 +18,7 @@ extern ICoreWebView2Environment *webview_env(void);
 #define WM_BV_RELOAD (WM_APP + 106)
 #define WM_BV_STOP   (WM_APP + 107)
 #define WM_BV_STATE  (WM_APP + 108)
+#define WM_BV_COOKIES (WM_APP + 109)
 
 static HWND g_parent = NULL, g_child = NULL, g_msgwnd = NULL;
 static ICoreWebView2Controller *g_ctrl = NULL;
@@ -81,6 +82,66 @@ static HRESULT STDMETHODCALLTYPE Nw_Invoke(ICoreWebView2NewWindowRequestedEventH
 }
 static ICoreWebView2NewWindowRequestedEventHandlerVtbl g_nwVtbl = { Nw_QI, Nw_AddRef, Nw_Release, Nw_Invoke };
 static NwCb g_nw = { &g_nwVtbl, 1 };
+
+/* ---------- Cookie 抓取（音乐 / 网盘登录复用浏览器登录态） ---------- */
+typedef struct CookieReq {
+  wchar_t uri[2048];
+  HANDLE ev;
+  char *header;
+  int count;
+  volatile LONG abandoned;
+} CookieReq;
+
+typedef struct {
+  ICoreWebView2GetCookiesCompletedHandlerVtbl *lpVtbl;
+  LONG ref;
+  CookieReq *req;
+} CookieCb;
+
+static HRESULT STDMETHODCALLTYPE Cookie_QI(ICoreWebView2GetCookiesCompletedHandler *T, REFIID riid, void **ppv) {
+  (void)riid;
+  *ppv = T;
+  return S_OK;
+}
+static ULONG STDMETHODCALLTYPE Cookie_AddRef(ICoreWebView2GetCookiesCompletedHandler *T) {
+  return InterlockedIncrement(&((CookieCb *)T)->ref);
+}
+static ULONG STDMETHODCALLTYPE Cookie_Release(ICoreWebView2GetCookiesCompletedHandler *T) {
+  LONG n = InterlockedDecrement(&((CookieCb *)T)->ref);
+  if (n == 0) free(T);
+  return n;
+}
+static HRESULT STDMETHODCALLTYPE Cookie_Invoke(ICoreWebView2GetCookiesCompletedHandler *T,
+                                               HRESULT hr, ICoreWebView2CookieList *list) {
+  CookieCb *cb = (CookieCb *)T;
+  CookieReq *r = cb->req;
+  if (!r || InterlockedCompareExchange(&r->abandoned, 0, 0)) return S_OK;
+  if (SUCCEEDED(hr) && list) {
+    UINT32 n = 0;
+    list->lpVtbl->get_Count(list, &n);
+    Buf b; buf_init(&b);
+    for (UINT32 i = 0; i < n; i++) {
+      ICoreWebView2Cookie *c = NULL;
+      if (FAILED(list->lpVtbl->GetValueAtIndex(list, i, &c)) || !c) continue;
+      LPWSTR nm = NULL, val = NULL;
+      c->lpVtbl->get_Name(c, &nm);
+      c->lpVtbl->get_Value(c, &val);
+      if (nm && val) {
+        char *n8 = w_to_u8(nm), *v8 = w_to_u8(val);
+        if (n8 && *n8) buf_addf(&b, "%s=%s; ", n8, v8 ? v8 : "");
+        free(n8); free(v8);
+      }
+      if (nm) CoTaskMemFree(nm);
+      if (val) CoTaskMemFree(val);
+      c->lpVtbl->Release(c);
+    }
+    r->header = buf_take(&b);
+    r->count = (int)n;
+  }
+  SetEvent(r->ev);
+  return S_OK;
+}
+static ICoreWebView2GetCookiesCompletedHandlerVtbl g_cookieVtbl = { Cookie_QI, Cookie_AddRef, Cookie_Release, Cookie_Invoke };
 
 typedef struct { ICoreWebView2CreateCoreWebView2ControllerCompletedHandlerVtbl *lpVtbl; LONG ref; } BCtrlCb;
 static HRESULT STDMETHODCALLTYPE BCtrl_QI(ICoreWebView2CreateCoreWebView2ControllerCompletedHandler *T, REFIID riid, void **ppv) { *ppv = T; return S_OK; }
@@ -208,6 +269,28 @@ static LRESULT CALLBACK BVMsgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     *out = make_state();
     return 0;
   }
+  case WM_BV_COOKIES: {
+    CookieReq *r = (CookieReq *)l;
+    int started = 0;
+    if (g_wv && r) {
+      ICoreWebView2_2 *w2 = NULL;
+      if (SUCCEEDED(g_wv->lpVtbl->QueryInterface(g_wv, &IID_ICoreWebView2_2, (void **)&w2)) && w2) {
+        ICoreWebView2CookieManager *cm = NULL;
+        if (SUCCEEDED(w2->lpVtbl->get_CookieManager(w2, &cm)) && cm) {
+          CookieCb *cb = (CookieCb *)xcalloc(1, sizeof(CookieCb));
+          cb->lpVtbl = &g_cookieVtbl;
+          cb->ref = 1;
+          cb->req = r;
+          if (SUCCEEDED(cm->lpVtbl->GetCookies(cm, r->uri, (ICoreWebView2GetCookiesCompletedHandler *)cb))) started = 1;
+          else free(cb);
+          cm->lpVtbl->Release(cm);
+        }
+        w2->lpVtbl->Release(w2);
+      }
+    }
+    if (!started && r) SetEvent(r->ev);
+    return 0;
+  }
   }
   return DefWindowProcW(h, m, w, l);
 }
@@ -262,4 +345,28 @@ cJSON *browser_view_state(void) {
   cJSON *out = NULL;
   if (g_msgwnd) SendMessageW(g_msgwnd, WM_BV_STATE, 0, (LPARAM)&out);
   return out ? out : cJSON_CreateObject();
+}
+
+char *browser_view_cookies(const char *uri, int *count) {
+  if (count) *count = 0;
+  if (!g_msgwnd || !uri) return NULL;
+  CookieReq *r = (CookieReq *)xcalloc(1, sizeof(CookieReq));
+  r->ev = CreateEventW(NULL, FALSE, FALSE, NULL);
+  wchar_t *wu = u8_to_w(uri);
+  wcsncpy(r->uri, wu, 2047);
+  r->uri[2047] = 0;
+  free(wu);
+  SendMessageW(g_msgwnd, WM_BV_COOKIES, 0, (LPARAM)r);
+  DWORD w = WaitForSingleObject(r->ev, 10000);
+  if (w != WAIT_OBJECT_0) {
+    /* 回调还没回来：标记放弃，不释放 req（避免回调 UAF）；极小概率的泄漏换稳定 */
+    InterlockedExchange(&r->abandoned, 1);
+    return NULL;
+  }
+  char *out = r->header;
+  r->header = NULL;
+  if (count) *count = r->count;
+  CloseHandle(r->ev);
+  free(r);
+  return out;
 }

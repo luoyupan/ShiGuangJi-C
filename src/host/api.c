@@ -9,6 +9,83 @@
 
 #pragma comment(lib, "shell32.lib")
 
+/* ---------------- 登录：复用浏览器模块的 Cookie ---------------- */
+static char g_login_platform[32] = "";
+static char g_login_url[2048] = "";
+
+static char *login_default_url(const char *platform) {
+  if (!strcmp(platform, "netease")) return xstrdup("https://music.163.com/");
+  if (!strcmp(platform, "qq")) return xstrdup("https://y.qq.com/");
+  return xstrdup("");
+}
+static int login_cookie_looks_ok(const char *platform, const char *cookie) {
+  if (!cookie) return 0;
+  if (!strcmp(platform, "netease")) return strstr(cookie, "MUSIC_U=") != NULL;
+  if (!strcmp(platform, "qq")) return strstr(cookie, "qqmusic_key=") || strstr(cookie, "qm_keyst=") || strstr(cookie, "uin=");
+  return *cookie != 0;
+}
+static void login_store(const char *platform, const char *cookie, const char *nick, const char *uid) {
+  cJSON *music = store_get("music");
+  if (!cJSON_IsObject(music)) { cJSON_Delete(music); music = cJSON_CreateObject(); }
+  cJSON *logins = cJSON_GetObjectItemCaseSensitive(music, "logins");
+  if (!cJSON_IsObject(logins)) {
+    cJSON_DeleteItemFromObjectCaseSensitive(music, "logins");
+    logins = cJSON_CreateObject();
+    cJSON_AddItemToObject(music, "logins", logins);
+  }
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddStringToObject(o, "cookie", cookie ? cookie : "");
+  cJSON_AddStringToObject(o, "nickname", nick && *nick ? nick : "浏览器登录");
+  cJSON_AddStringToObject(o, "uid", uid ? uid : "");
+  cJSON_AddStringToObject(o, "platform", platform);
+  cJSON_AddNumberToObject(o, "at", (double)now_ms());
+  cJSON_AddBoolToObject(o, "reused", 1);
+  cJSON_DeleteItemFromObjectCaseSensitive(logins, platform);
+  cJSON_AddItemToObject(logins, platform, o);
+  store_set("music", music);
+  cJSON_Delete(music);
+}
+static void login_netease_account(const char *cookie, char **nick, char **uid) {
+  *nick = NULL; *uid = NULL;
+  if (!cookie || !*cookie) return;
+  size_t n = strlen(cookie) + 160;
+  char *headers = (char *)xmalloc(n);
+  snprintf(headers, n, "Cookie: %s\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n", cookie);
+  HttpResult r;
+  memset(&r, 0, sizeof(r));
+  if (http_request_ex("GET", "https://music.163.com/api/nuser/account/get", headers, NULL, 0, 6000, &r)) {
+    cJSON *j = cJSON_Parse(r.data ? r.data : "");
+    cJSON *pf = j ? cJSON_GetObjectItemCaseSensitive(j, "profile") : NULL;
+    if (cJSON_IsObject(pf)) {
+      const char *nn = json_str(pf, "nickname", "");
+      double uidn = json_num(pf, "userId", 0);
+      if (*nn) *nick = xstrdup(nn);
+      if (uidn > 0) {
+        char b[32]; snprintf(b, sizeof(b), "%.0f", uidn);
+        *uid = xstrdup(b);
+      }
+    }
+    cJSON_Delete(j);
+  }
+  http_result_free(&r);
+  free(headers);
+}
+static int login_from_browser(const char *platform, const char *url, int *count,
+                              char **nickname, char **uid) {
+  *count = 0; *nickname = NULL; *uid = NULL;
+  char *uri = (url && *url) ? xstrdup(url) : login_default_url(platform);
+  if (!*uri) { free(uri); return 0; }
+  char *cookie = browser_view_cookies(uri, count);
+  free(uri);
+  if (!cookie) return 0;
+  int ok = login_cookie_looks_ok(platform, cookie);
+  if (!ok) { free(cookie); return 0; }
+  if (!strcmp(platform, "netease")) login_netease_account(cookie, nickname, uid);
+  login_store(platform, cookie, *nickname, *uid);
+  free(cookie);
+  return 1;
+}
+
 /* ---------------- 返回封装 ---------------- */
 static char *dup_host(const char *s) {
   size_t n = strlen(s ? s : "");
@@ -414,13 +491,43 @@ static int host_dispatch(const char *channel, cJSON *args, char **out_json, char
   }
   if (!strcmp(channel, "login:state")) {
     cJSON *o = cJSON_CreateObject();
-    cJSON_AddBoolToObject(o, "open", 0);
-    cJSON_AddStringToObject(o, "platform", "");
+    cJSON_AddBoolToObject(o, "open", browser_view_exists());
+    cJSON_AddStringToObject(o, "platform", g_login_platform);
     return ret_json(o, out_json);
   }
-  if (!strcmp(channel, "login:cancel")) return ret_json(cJSON_CreateBool(1), out_json);
-  if (!strcmp(channel, "login:open") || !strcmp(channel, "login:check"))
-    return ret_error(out_error, "C 版的内置登录窗还没接上（可先用浏览器模块登录）");
+  if (!strcmp(channel, "login:cancel")) {
+    g_login_platform[0] = 0; g_login_url[0] = 0;
+    return ret_json(cJSON_CreateBool(1), out_json);
+  }
+  if (!strcmp(channel, "login:open") || !strcmp(channel, "login:check")) {
+    cJSON *o = arg_obj(args, 0);
+    const char *kind = o ? json_str(o, "kind", "music") : "music";
+    const char *platform = o ? json_str(o, "platform", "") : "";
+    const char *url = o ? json_str(o, "url", "") : "";
+    if (*kind && strcmp(kind, "music"))
+      return ret_error(out_error, "内置登录窗目前只接了音乐平台；网盘请先在「浏览器」模块登录，再回来点一次");
+    if (*platform) snprintf(g_login_platform, sizeof(g_login_platform), "%s", platform);
+    if (*url) snprintf(g_login_url, sizeof(g_login_url), "%s", url);
+    if (!*g_login_platform) return ret_error(out_error, "不知道要登录哪个平台");
+    int count = 0;
+    char *nick = NULL, *uid = NULL;
+    if (!login_from_browser(g_login_platform, g_login_url, &count, &nick, &uid)) {
+      char msg[512];
+      snprintf(msg, sizeof(msg),
+               "浏览器模块里还没有检测到 %s 的登录 Cookie。请先在「浏览器」打开并登录该平台，再回来点一次。",
+               !strcmp(g_login_platform, "netease") ? "网易云音乐" : (!strcmp(g_login_platform, "qq") ? "QQ 音乐" : g_login_platform));
+      free(nick); free(uid);
+      return ret_error(out_error, msg);
+    }
+    cJSON *res = cJSON_CreateObject();
+    cJSON_AddBoolToObject(res, "ok", 1);
+    cJSON_AddStringToObject(res, "platform", g_login_platform);
+    cJSON_AddStringToObject(res, "nickname", nick && *nick ? nick : "浏览器登录");
+    cJSON_AddNumberToObject(res, "count", count);
+    cJSON_AddBoolToObject(res, "reused", 1);
+    free(nick); free(uid);
+    return ret_json(res, out_json);
+  }
   if (!strcmp(channel, "plugin:list") || !strcmp(channel, "plugin:rescan")) {
     cJSON *root = cJSON_CreateObject();
     cJSON *arr = cJSON_CreateArray();

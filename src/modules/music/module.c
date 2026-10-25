@@ -1174,6 +1174,14 @@ static cJSON *local_track_match(const char *title, const char *artist, const cha
   cJSON_Delete(root);
   return best;
 }
+static char *login_cookie(const char *platform) {
+  cJSON *root = ms_get_root();
+  cJSON *logins = cJSON_GetObjectItemCaseSensitive(root, "logins");
+  cJSON *lg = cJSON_GetObjectItemCaseSensitive(logins, platform);
+  char *cookie = *json_str(lg, "cookie", "") ? xstrdup(json_str(lg, "cookie", "")) : NULL;
+  cJSON_Delete(root);
+  return cookie;
+}
 static char *playlist_id_of(const char *link) {
   const char *p = link ? strstr(link, "id=") : NULL;
   if (p) p += 3;
@@ -1191,9 +1199,15 @@ static cJSON *online_playlist_preview(const char *link) {
   char *url = (char *)xmalloc(cap);
   snprintf(url, cap, "https://music.163.com/api/v6/playlist/detail?id=%s&n=1000", pid);
   int status = 0;
-  char *body = g_host->http_request("GET", url,
-      "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n",
+  char *ck = login_cookie("netease");
+  size_t hcap = (ck ? strlen(ck) : 0) + 160;
+  char *headers = (char *)xmalloc(hcap);
+  if (ck && *ck) snprintf(headers, hcap, "Cookie: %s\r\nAccept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n", ck);
+  else snprintf(headers, hcap, "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n");
+  free(ck);
+  char *body = g_host->http_request("GET", url, headers,
       NULL, 0, 8000, &status, NULL);
+  free(headers);
   free(url); free(pid);
   if (!body || status != 200) { if (body) g_host->dealloc(body); return NULL; }
   cJSON *j = cJSON_Parse(body);
@@ -2169,7 +2183,46 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
     cJSON_AddNumberToObject(res, "matched", matched);
     cJSON_AddNumberToObject(res, "missing", missing);
   } else if (!strcmp(channel, "music:myPlaylists")) {
-    rc = -1; *out_error = mod_ret_error("读取「我的歌单」需要登录平台（当前只支持公开歌单链接）");
+    const char *platform = mod_arg_str(args, 0, "netease");
+    if (strcmp(platform, "netease")) { rc = -1; *out_error = mod_ret_error("目前只接入了网易云「我的歌单」"); goto done; }
+    cJSON *root = ms_get_root();
+    cJSON *logins = cJSON_GetObjectItemCaseSensitive(root, "logins");
+    cJSON *lg = cJSON_GetObjectItemCaseSensitive(logins, "netease");
+    char *cookie = *json_str(lg, "cookie", "") ? xstrdup(json_str(lg, "cookie", "")) : NULL;
+    const char *uid = json_str(lg, "uid", "");
+    char uids[32]; snprintf(uids, sizeof(uids), "%s", uid);
+    cJSON_Delete(root);
+    if (!cookie) { rc = -1; *out_error = mod_ret_error("还没有登录网易云（先在浏览器模块登录，再回来点一次）"); goto done; }
+    if (!*uids) { free(cookie); rc = -1; *out_error = mod_ret_error("登录信息里没有账号 UID，请重新登录一次"); goto done; }
+    char url[512];
+    snprintf(url, sizeof(url), "https://music.163.com/api/user/playlist?uid=%s&limit=1000&offset=0", uids);
+    size_t hcap = strlen(cookie) + 160;
+    char *headers = (char *)xmalloc(hcap);
+    snprintf(headers, hcap, "Cookie: %s\r\nAccept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n", cookie);
+    int status = 0;
+    char *body = g_host->http_request("GET", url, headers, NULL, 0, 8000, &status, NULL);
+    free(headers); free(cookie);
+    if (!body || status != 200) { if (body) g_host->dealloc(body); rc = -1; *out_error = mod_ret_error("读取网易云歌单失败"); goto done; }
+    cJSON *j = cJSON_Parse(body);
+    g_host->dealloc(body);
+    cJSON *pls = j ? cJSON_GetObjectItemCaseSensitive(j, "playlist") : NULL;
+    cJSON *list = cJSON_CreateArray();
+    cJSON *p = NULL;
+    cJSON_ArrayForEach(p, pls) {
+      cJSON *o = cJSON_CreateObject();
+      cJSON_AddStringToObject(o, "id", "");
+      char b[32]; snprintf(b, sizeof(b), "%.0f", json_num(p, "id", 0));
+      cJSON_DeleteItemFromObjectCaseSensitive(o, "id");
+      cJSON_AddStringToObject(o, "id", b);
+      cJSON_AddStringToObject(o, "name", json_str(p, "name", "歌单"));
+      cJSON_AddStringToObject(o, "cover", json_str(p, "coverImgUrl", ""));
+      cJSON_AddNumberToObject(o, "trackCount", json_num(p, "trackCount", 0));
+      cJSON_AddStringToObject(o, "platform", "netease");
+      cJSON_AddItemToArray(list, o);
+    }
+    cJSON_Delete(j);
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "list", list);
   } else if (!strcmp(channel, "music:testCrawlSites")) {
     cJSON *urls = mod_arg_at(args, 0);
     cJSON *details = cJSON_CreateArray();

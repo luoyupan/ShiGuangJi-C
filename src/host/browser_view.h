@@ -11,6 +11,8 @@ void browser_view_forward(void);
 void browser_view_reload(void);
 void browser_view_stop(void);
 cJSON *browser_view_state(void);
+/* 读某个 URL 的浏览器 Cookie（必须在浏览器画布创建后；工作线程可调） */
+char *browser_view_cookies(const char *uri, int *count);
 int browser_view_exists(void);
 
 #endif
