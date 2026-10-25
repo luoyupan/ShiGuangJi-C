@@ -866,6 +866,22 @@ const GamesView = {
     this.platforms = list;
     this._loadingPlatforms = false;
     if (this.page === 'platforms') this.renderPlatforms();
+    if (!this._steamSyncTried) {
+      this._steamSyncTried = true;
+      this.syncSteamBackground();
+    }
+  },
+
+  /** 缓慢的 Steam 账号库同步放后台做，先把本机记录画出来，成功后再刷一次 */
+  async syncSteamBackground() {
+    try {
+      const r = await API.raw.platform.syncSteam();
+      if (!r || !r.ok || !r.count) return;
+      this.platforms = null;
+      this.pfData = null;
+      if (this.page === 'platforms') this.loadPlatforms(false);
+      else if (this.page === 'platform') this.loadPlatformDetail(false);
+    } catch { /* 私密资料 / 断网：保持本机记录 */ }
   },
 
   /**
@@ -971,12 +987,19 @@ const GamesView = {
     if (this._loadingPf) return;
     this._loadingPf = true;
     if (force) this.pfData = null;
+    if (force && this.platformId === 'steam') {
+      await API.raw.platform.syncSteam().catch(() => null);
+    }
     const opts = { platformId: this.platformId, force: !!force };
     if (this.platformId === 'steam' && this._steamAccountId) opts.steamAccountId = this._steamAccountId;
     const d = await API.raw.platform.detail(opts).catch((e) => ({ __err: e.message }));
     this.pfData = d;
     this._loadingPf = false;
     if (this.page === 'platform') this.renderPlatform();
+    if (!force && this.platformId === 'steam' && !this._steamSyncTried) {
+      this._steamSyncTried = true;
+      this.syncSteamBackground();
+    }
   },
 
   /** 平台详情里的筛 + 排 + 搜，全在前端做（数据已经拉全了，没必要来回问主进程） */
@@ -1005,6 +1028,12 @@ const GamesView = {
       el('div', { class: 'pf-ico', html: window.ICON.platform(this.platformId) }),
       el('h2', { style: { margin: 0, fontSize: '1.16rem' }, text: name }),
       el('span', { class: 'chip', text: this.platformId === 'steam' ? '本机 Steam 库' : '拾光集游戏库' }),
+      this.platformId === 'steam' && this.pfData
+        ? el('span', {
+          class: 'chip',
+          title: this.pfData.accountLibrary ? '已同步 Steam 账号完整库' : '账号库未同步，当前只显示本机记录；点「重新读取」再试',
+          text: this.pfData.accountLibrary ? '账号完整库' : '本机记录'
+        }) : null,
       el('div', { class: 'grow' }),
       el('button', { class: 'btn btn-sm', onclick: () => this.loadPlatformDetail(true) }, uiSpan('refresh'), '重新读取')
     ));

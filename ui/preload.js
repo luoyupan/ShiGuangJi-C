@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('SGJ', {
     overview: (o) => inv('platform:overview', o || {}),
     openClient: (id) => inv('platform:openClient', id),
     applySteam: (accountId) => inv('platform:applySteam', accountId),
+    syncSteam: () => inv('platform:syncSteam'),
     detail: (o) => inv('platform:detail', o || {}),
     openApp: (appid, platform) => inv('platform:openApp', { appid, platform }),
     // 未安装的卡片点「安装」→ 主进程 shell.openExternal('steam://install/<appid>')

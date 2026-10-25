@@ -1583,6 +1583,463 @@ static cJSON *scan_steam(cJSON **out_roots) {
   return games;
 }
 
+/* ---------------- 封面：Steam AppID / CDN 缓存 / 本地 librarycache ---------------- */
+static char *steam_appid_from_text(const char *s) {
+  if (!s || !*s) return NULL;
+  char *low = str_lower(s);
+  const char *marks[] = { "steam://uninstall/", "steam://rungameid/", NULL };
+  for (int i = 0; marks[i]; i++) {
+    const char *p = strstr(low, marks[i]);
+    if (!p) continue;
+    p += strlen(marks[i]);
+    int n = 0;
+    while (p[n] >= '0' && p[n] <= '9') n++;
+    if (n > 0) {
+      char *out = xstrndup(p, (size_t)n);
+      free(low);
+      return out;
+    }
+  }
+  free(low);
+  return NULL;
+}
+static char *steam_appid_from_game(cJSON *g) {
+  const char *a = J_str(g, "appid", "");
+  if (*a && strlen(a) <= 12) {
+    int digits = 1;
+    for (const char *p = a; *p; p++) if (*p < '0' || *p > '9') digits = 0;
+    if (digits) return xstrdup(a);
+  }
+  char *id = steam_appid_from_text(J_str(g, "uninstallString", ""));
+  if (id) return id;
+  id = steam_appid_from_text(J_str(g, "launch", ""));
+  if (id) return id;
+  /* 从 steamapps\common\<installdir> 反查 appmanifest */
+  const char *path = J_str(g, "path", "");
+  char *low = str_lower(path);
+  const char *common = strstr(low, "\\steamapps\\common\\");
+  if (common) {
+    const char *dir = path + (common - low) + strlen("\\steamapps\\common\\");
+    char installdir[MAX_PATH]; snprintf(installdir, sizeof(installdir), "%s", dir);
+    char *slash = strchr(installdir, '\\'); if (slash) *slash = 0;
+    char *root = steam_root_find();
+    if (root) {
+      char *pat = path_join(root, "steamapps\\appmanifest_*.acf");
+      wchar_t *wp = u8_to_w(pat);
+      WIN32_FIND_DATAW fd; HANDLE h = FindFirstFileW(wp, &fd);
+      free(wp); free(pat);
+      if (h != INVALID_HANDLE_VALUE) {
+        do {
+          char *fn = w_to_u8(fd.cFileName);
+          unsigned appid = 0;
+          if (sscanf(fn, "appmanifest_%u.acf", &appid) == 1) {
+            char *file = path_join(root, "steamapps");
+            char *full = path_join(file, fn);
+            char *txt = file_read_text(full);
+            if (txt) {
+              char *inst = vdf_field(txt, "installdir");
+              if (inst && !_stricmp(inst, installdir)) {
+                free(inst); free(txt); free(full); free(file); free(fn);
+                FindClose(h); free(root);
+                char b[32]; snprintf(b, sizeof(b), "%u", appid);
+                free(low);
+                return xstrdup(b);
+              }
+              free(inst); free(txt);
+            }
+            free(full); free(file);
+          }
+          free(fn);
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+      }
+      free(root);
+    }
+  }
+  free(low);
+  return NULL;
+}
+static char *file_url_of(const char *path) {
+  size_t n = strlen(path);
+  char *u = (char *)xmalloc(n + 12);
+  sprintf(u, "file:///%s", path);
+  for (char *p = u + 8; *p; p++) if (*p == '\\') *p = '/';
+  return u;
+}
+static int download_image(const char *url, const char *dest) {
+  int status = 0;
+  size_t len = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: image/jpeg,image/png,image/*;q=0.8\r\nUser-Agent: ShiGuangJi/1.0\r\n",
+      NULL, 0, 12000, &status, &len);
+  if (!body) return 0;
+  int ok = status == 200 && len > 800 &&
+           ((unsigned char)body[0] == 0xFF || (unsigned char)body[0] == 0x89);
+  if (ok) {
+    wchar_t *w = u8_to_w(dest);
+    HANDLE h = CreateFileW(w, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    free(w);
+    if (h != INVALID_HANDLE_VALUE) {
+      DWORD wrote = 0;
+      ok = WriteFile(h, body, (DWORD)len, &wrote, NULL) && wrote == len;
+      CloseHandle(h);
+      if (!ok) DeleteFileW(u8_to_w(dest));
+    } else ok = 0;
+  }
+  g_host->dealloc(body);
+  return ok;
+}
+static char *steam_store_search_appid(const char *name) {
+  if (!name || !*name) return NULL;
+  char *q = url_encode(name);
+  if (!q) return NULL;
+  size_t cap = strlen(q) + 256;
+  char *url = (char *)xmalloc(cap);
+  snprintf(url, cap, "https://store.steampowered.com/api/storesearch/?term=%s&l=schinese&cc=CN", q);
+  int status = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: application/json\r\nUser-Agent: ShiGuangJi/1.0\r\n", NULL, 0, 9000, &status, NULL);
+  free(url); free(q);
+  if (!body) return NULL;
+  char *out = NULL;
+  if (status == 200) {
+    cJSON *j = cJSON_Parse(body);
+    cJSON *items = j ? cJSON_GetObjectItemCaseSensitive(j, "items") : NULL;
+    cJSON *it = NULL;
+    if (cJSON_IsArray(items)) {
+      cJSON_ArrayForEach(it, items) {
+        int id = (int)json_num(it, "id", 0);
+        const char *nm = json_str(it, "name", "");
+        if (id > 0 && *nm) {
+          char b[32]; snprintf(b, sizeof(b), "%d", id);
+          out = xstrdup(b);
+          break;
+        }
+      }
+    }
+    cJSON_Delete(j);
+  }
+  g_host->dealloc(body);
+  return out;
+}
+static cJSON *cover_apply(const char *id, const char *appid, const char *cover,
+                          const char *local_path, const char *kind) {
+  cJSON *patch = cJSON_CreateObject();
+  if (appid && *appid) J_set_str(patch, "appid", appid);
+  J_set_str(patch, "cover", cover ? cover : "");
+  J_set_str(patch, "coverKind", kind ? kind : "none");
+  char *u = (local_path && *local_path) ? file_url_of(local_path) : xstrdup("");
+  J_set_str(patch, "coverLocal", u);
+  free(u);
+  cJSON *o = G_update(id, patch);
+  cJSON_Delete(patch);
+  return o;
+}
+static cJSON *cover_apply_steam(const char *id, const char *appid) {
+  char *covers = path_join(mod_data_dir(), "covers");
+  path_mkdirs(covers);
+  char fn[64]; snprintf(fn, sizeof(fn), "steam_%s.jpg", appid);
+  char *cached = path_join(covers, fn);
+  char *local = NULL;
+  char *remote = NULL;
+  size_t n = strlen(appid) + 128;
+  remote = (char *)xmalloc(n);
+  snprintf(remote, n, "https://cdn.cloudflare.steamstatic.com/steam/apps/%s/library_600x900.jpg", appid);
+  if (path_exists(cached)) local = xstrdup(cached);
+  if (!local) {
+    char *root = steam_root_find();
+    if (root) {
+      char *cl = steam_cover_local(root, appid);
+      if (cl) { local = xstrdup(cl); free(cl); }
+      free(root);
+    }
+  }
+  if (!local && download_image(remote, cached)) local = xstrdup(cached);
+  if (!local) {
+    /* 600x900 没有就退回 header（至少不是空白） */
+    char *hdr = (char *)xmalloc(n);
+    snprintf(hdr, n, "https://cdn.cloudflare.steamstatic.com/steam/apps/%s/header.jpg", appid);
+    if (download_image(hdr, cached)) local = xstrdup(cached);
+    else { free(remote); remote = hdr; hdr = NULL; }
+    free(hdr);
+  }
+  cJSON *o = cover_apply(id, appid, remote, local, "steam");
+  free(local); free(remote); free(cached); free(covers);
+  return o;
+}
+static cJSON *resolve_cover_game(const char *id, const char *mode, int allow_net, char **out_err) {
+  cJSON *root = G_root();
+  cJSON *g = G_find(root, id);
+  if (!g) { cJSON_Delete(root); *out_err = mod_ret_error("游戏不存在"); return NULL; }
+  const char *kind = J_str(g, "coverKind", "");
+  if (!strcmp(kind, "custom") && strcmp(mode, "default")) {
+    cJSON *o = G_decorate(g);
+    cJSON_Delete(root);
+    return o;
+  }
+  char *appid = steam_appid_from_game(g);
+  if (!appid && allow_net && !strcmp(J_str(g, "platform", ""), "steam"))
+    appid = steam_store_search_appid(J_str(g, "name", ""));
+  if (appid) {
+    cJSON *o = cover_apply_steam(id, appid);
+    free(appid);
+    cJSON_Delete(root);
+    if (!o) *out_err = mod_ret_error("保存封面失败");
+    return o;
+  }
+  const char *exe = J_str(g, "exe", "");
+  const char *path = J_str(g, "path", "");
+  cJSON_Delete(root);
+  if (*exe || *path)
+    *out_err = mod_ret_error("这款游戏没有 Steam AppID，也没找到可用的本地封面；可以先在编辑信息里填 AppID，或换一张本地图片");
+  else
+    *out_err = mod_ret_error("没能提取到封面 —— 没有 Steam AppID，也没有启动程序（.exe）");
+  return NULL;
+}
+
+/* ---------------- Steam 完整库（社区 XML 缓存） ----------------
+   本机 appmanifest 只有“已安装”，Steam 客户端里的 340 款是账号库。
+   这里读公开资料页的 games?xml=1，缓存 12 小时；私密资料/断网时退回本机记录。 */
+static char *xml_text(const char *s, const char *e, const char *tag) {
+  char open[32], close[32];
+  snprintf(open, sizeof(open), "<%s>", tag);
+  snprintf(close, sizeof(close), "</%s>", tag);
+  const char *p = strstr(s, open);
+  if (!p || p >= e) return NULL;
+  p += strlen(open);
+  const char *q = strstr(p, close);
+  if (!q || q > e) return NULL;
+  if (!strncmp(p, "<![CDATA[", 9)) {
+    p += 9;
+    const char *ce = strstr(p, "]]>");
+    if (!ce || ce > q) return NULL;
+    q = ce;
+  }
+  char *out = xstrndup(p, (size_t)(q - p));
+  /* 常见 XML 实体 */
+  char *w = out;
+  for (char *r = out; *r; ) {
+    if (!strncmp(r, "&amp;", 5)) { *w++ = '&'; r += 5; }
+    else if (!strncmp(r, "&lt;", 4)) { *w++ = '<'; r += 4; }
+    else if (!strncmp(r, "&gt;", 4)) { *w++ = '>'; r += 4; }
+    else if (!strncmp(r, "&quot;", 6)) { *w++ = '"'; r += 6; }
+    else if (!strncmp(r, "&apos;", 6)) { *w++ = '\''; r += 6; }
+    else *w++ = *r++;
+  }
+  *w = 0;
+  return out;
+}
+static int steam_library_cache(cJSON **out, int64_t *age_ms, char **account) {
+  *out = NULL; if (age_ms) *age_ms = 0; if (account) *account = NULL;
+  cJSON *root = G_root();
+  cJSON *sl = obj_get(root, "steamLibrary");
+  cJSON *games = sl ? cJSON_GetObjectItemCaseSensitive(sl, "games") : NULL;
+  if (cJSON_IsArray(games)) {
+    *out = cJSON_Duplicate(games, 1);
+    if (age_ms) *age_ms = now_ms() - (int64_t)J_num(sl, "at", 0);
+    if (account) *account = xstrdup(J_str(sl, "account", ""));
+  }
+  cJSON_Delete(root);
+  return *out ? 1 : 0;
+}
+static cJSON *steam_sync_library(int force, int timeout_ms) {
+  cJSON *cached = NULL;
+  int64_t age = 0;
+  if (!force && steam_library_cache(&cached, &age, NULL) && age < 12LL * 3600 * 1000) return cached;
+  cJSON_Delete(cached);
+  cJSON *acc = steam_accounts();
+  char sid_buf[64] = "";
+  cJSON *a0 = cJSON_GetArrayItem(acc, 0);
+  if (a0) snprintf(sid_buf, sizeof(sid_buf), "%s", J_str(a0, "steamId64", ""));
+  if (!*sid_buf) { cJSON_Delete(acc); return NULL; }
+  const char *sid = sid_buf;
+  char url[512];
+  snprintf(url, sizeof(url), "https://steamcommunity.com/profiles/%s/games?tab=all&xml=1&l=schinese", sid);
+  int status = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: application/xml,text/xml\r\nUser-Agent: ShiGuangJi/1.0\r\n", NULL, 0,
+      timeout_ms > 0 ? timeout_ms : 9000, &status, NULL);
+  if (!body) { cJSON_Delete(acc); return NULL; }
+  cJSON *arr = cJSON_CreateArray();
+  if (status == 200) {
+    const char *p = body;
+    while ((p = strstr(p, "<game>")) != NULL) {
+      const char *end = strstr(p, "</game>");
+      if (!end) break;
+      char *appid = xml_text(p, end, "appID");
+      char *name = xml_text(p, end, "name");
+      char *hours = xml_text(p, end, "hoursOnRecord");
+      char *logo = xml_text(p, end, "logo");
+      if (appid && *appid && name && *name) {
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "appid", appid);
+        cJSON_AddStringToObject(o, "name", name);
+        double h = hours ? atof(hours) : 0;
+        cJSON_AddNumberToObject(o, "minutes", h * 60);
+        cJSON_AddStringToObject(o, "logo", logo ? logo : "");
+        cJSON_AddItemToArray(arr, o);
+      }
+      free(appid); free(name); free(hours); free(logo);
+      p = end + 7;
+    }
+  }
+  g_host->dealloc(body);
+  cJSON_Delete(acc);
+  if (!cJSON_GetArraySize(arr)) { cJSON_Delete(arr); return NULL; }
+  cJSON *root = G_root();
+  cJSON *sl = cJSON_CreateObject();
+  cJSON_AddNumberToObject(sl, "at", (double)now_ms());
+  cJSON_AddStringToObject(sl, "account", sid);
+  cJSON_AddItemToObject(sl, "games", cJSON_Duplicate(arr, 1));
+  J_set(root, "steamLibrary", sl);
+  G_save(root);
+  cJSON_Delete(root);
+  return arr;
+}
+
+/* ---------------- 卸载：平台优先 → 自带卸载器 → 删目录 ---------------- */
+static int safe_game_dir(const char *path) {
+  if (!path || !*path || !path_is_dir(path)) return 0;
+  char *low = str_lower(path);
+  size_t n = strlen(low);
+  while (n && (low[n - 1] == '\\' || low[n - 1] == '/')) low[--n] = 0;
+  int ok = 1;
+  if (n < 8 || (n == 2 && low[1] == ':')) ok = 0;
+  const char *bad[] = { "\\windows", "\\program files", "\\program files (x86)", "\\users", NULL };
+  for (int i = 0; ok && bad[i]; i++) {
+    size_t bl = strlen(bad[i]);
+    if (!strncmp(low, bad[i], bl) && (low[bl] == 0 || low[bl] == '\\')) {
+      if (low[bl] == 0) ok = 0;
+    }
+  }
+  const char *base = path_basename(path);
+  if (ok && (!_stricmp(base, "common") || !_stricmp(base, "steamapps") || !_stricmp(base, "steam"))) ok = 0;
+  const char *common = strstr(low, "\\steamapps\\common\\");
+  if (ok && common) {
+    const char *tail = common + strlen("\\steamapps\\common\\");
+    if (!*tail) ok = 0;
+  }
+  free(low);
+  return ok;
+}
+static int run_cmd_line(const char *cmd) {
+  if (!cmd || !*cmd) return 0;
+  char *low = str_lower(cmd);
+  int is_url = strstr(low, "://") != NULL;
+  free(low);
+  if (is_url) {
+    wchar_t *w = u8_to_w(cmd);
+    HINSTANCE r = ShellExecuteW(NULL, L"open", w, NULL, NULL, SW_SHOWNORMAL);
+    free(w);
+    return (INT_PTR)r > 32;
+  }
+  const char *p = cmd;
+  while (*p == ' ' || *p == '\t') p++;
+  if (*p == '"') {
+    const char *e = strchr(p + 1, '"');
+    if (e) {
+      char *exe = xstrndup(p + 1, (size_t)(e - p - 1));
+      char *args = xstrdup(e + 1);
+      while (*args == ' ') memmove(args, args + 1, strlen(args));
+      wchar_t *wexe = u8_to_w(exe), *wargs = *args ? u8_to_w(args) : NULL;
+      HINSTANCE r = ShellExecuteW(NULL, L"open", wexe, wargs, NULL, SW_SHOWNORMAL);
+      free(wexe); free(wargs); free(exe); free(args);
+      return (INT_PTR)r > 32;
+    }
+  }
+  wchar_t *w = u8_to_w(cmd);
+  STARTUPINFOW si; PROCESS_INFORMATION pi;
+  memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+  memset(&pi, 0, sizeof(pi));
+  BOOL ok = CreateProcessW(NULL, w, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+  free(w);
+  if (ok) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+  return ok;
+}
+static int delete_dir_recycle(const char *path) {
+  wchar_t *w = u8_to_w(path);
+  size_t n = wcslen(w);
+  wchar_t *from = (wchar_t *)xmalloc((n + 2) * sizeof(wchar_t));
+  memcpy(from, w, n * sizeof(wchar_t));
+  from[n] = 0; from[n + 1] = 0;
+  free(w);
+  SHFILEOPSTRUCTW op;
+  memset(&op, 0, sizeof(op));
+  op.wFunc = FO_DELETE;
+  op.pFrom = from;
+  op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+  int ok = SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+  free(from);
+  if (!ok) {
+    char cmd[MAX_PATH * 3];
+    snprintf(cmd, sizeof(cmd), "cmd /c rmdir /s /q \"%s\"", path);
+    g_host->run_command(cmd, 1);
+  }
+  return !path_exists(path);
+}
+static int remove_game_record(const char *id) {
+  cJSON *root = G_root();
+  cJSON *list = obj_get(root, "list"), *out = cJSON_CreateArray();
+  int removed = 0;
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, list) {
+    if (!strcmp(J_str(it, "id", ""), id)) removed++;
+    else cJSON_AddItemToArray(out, cJSON_Duplicate(it, 1));
+  }
+  J_set(root, "list", out);
+  G_save(root);
+  if (removed) G_emit("remove", NULL);
+  cJSON_Delete(root);
+  return removed;
+}
+static cJSON *uninstall_info_of(cJSON *g) {
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddStringToObject(o, "name", J_str(g, "name", ""));
+  cJSON_AddStringToObject(o, "id", J_str(g, "id", ""));
+  cJSON_AddStringToObject(o, "path", J_str(g, "path", ""));
+  cJSON_AddStringToObject(o, "uninstallString", J_str(g, "uninstallString", ""));
+  cJSON_AddStringToObject(o, "platform", J_str(g, "platform", "local"));
+  char *appid = steam_appid_from_game(g);
+  cJSON_AddStringToObject(o, "appid", appid ? appid : "");
+  const char *us = J_str(g, "uninstallString", "");
+  const char *platform = J_str(g, "platform", "local");
+  char *dir = NULL;
+  if (path_is_dir(J_str(g, "path", ""))) dir = xstrdup(J_str(g, "path", ""));
+  else if (*J_str(g, "exe", "")) {
+    char *d = path_dirname(J_str(g, "exe", ""));
+    if (d && path_is_dir(d)) dir = d; else free(d);
+  }
+  int safe = 0;
+  const char *route = "none";
+  char label[64] = "无法卸载";
+  char detail[900] = "没有可用的卸载命令，也没有可删除的游戏目录。";
+  char warn[512] = "";
+  if (!strcmp(platform, "steam") && appid && *appid) {
+    route = "platform"; safe = 1;
+    snprintf(label, sizeof(label), "Steam 平台卸载");
+    snprintf(detail, sizeof(detail), "调用 Steam 客户端卸载「%s」（appid %s）。", J_str(g, "name", ""), appid);
+    snprintf(warn, sizeof(warn), "Steam 会删除游戏文件；云存档、创意工坊订阅和截图按 Steam 自己的规则保留。");
+  } else if (*us) {
+    route = "uninstaller"; safe = 1;
+    snprintf(label, sizeof(label), "%s",
+             (!strcmp(platform, "local") || !strcmp(platform, "auto")) ? "游戏自带卸载程序" : "平台卸载程序");
+    snprintf(detail, sizeof(detail), "运行卸载命令：%s", us);
+    snprintf(warn, sizeof(warn), "会打开厂商的卸载界面，请按提示完成；不会直接删除游戏目录。");
+  } else if (dir && safe_game_dir(dir)) {
+    route = "trash"; safe = 1;
+    snprintf(label, sizeof(label), "删除游戏目录");
+    snprintf(detail, sizeof(detail), "没有可用的卸载命令，将把「%s」移进回收站。", dir);
+    snprintf(warn, sizeof(warn), "只删除这个游戏目录；存档、文档和启动器不动。删前请确认路径。");
+  }
+  cJSON_AddStringToObject(o, "route", route);
+  cJSON_AddStringToObject(o, "label", label);
+  cJSON_AddStringToObject(o, "detail", detail);
+  cJSON_AddStringToObject(o, "warn", warn);
+  json_set_bool(o, "safe", safe);
+  free(appid); free(dir);
+  return o;
+}
+
 static int non_game_name(const char *name) {
   const char *bad[] = { "microsoft", "windows", "update", "hotfix", "redistributable", "runtime", "sdk", ".net",
     "visual c++", "visual studio", "directx", "driver", "service pack", "python", "java", "node.js", "git",
@@ -2130,17 +2587,32 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
     cJSON_Delete(patch);
     res = o ? o : cJSON_CreateNull();
   } else if (is_switch(channel, "games:resolveCover") || is_switch(channel, "games:fetchSteamCover")) {
-    cJSON *root = G_root();
-    cJSON *g = G_find(root, mod_arg_str(args, 0, ""));
-    cJSON *o = g ? G_decorate(g) : cJSON_CreateNull();
-    cJSON_Delete(root);
+    cJSON *opts = mod_arg_obj(args, 1);
+    const char *mode = opts ? json_str(opts, "mode", "refresh") : "refresh";
+    int net = opts ? json_bool(opts, "allowNetwork", 1) : 1;
+    char *err = NULL;
+    cJSON *o = resolve_cover_game(mod_arg_str(args, 0, ""), mode, net, &err);
+    if (!o) { rc = -1; *out_error = err ? err : mod_ret_error("获取封面失败"); goto done; }
     res = o;
   } else if (is_switch(channel, "games:resolveCovers")) {
     cJSON *ids = mod_arg_at(args, 0);
-    cJSON *out = cJSON_CreateArray();
+    cJSON *opts = mod_arg_obj(args, 1);
+    int net = opts ? json_bool(opts, "allowNetwork", 1) : 1;
+    int count = 0;
     int n = cJSON_IsArray(ids) ? cJSON_GetArraySize(ids) : 0;
-    for (int i = 0; i < n; i++) cJSON_AddItemToArray(out, cJSON_Duplicate(cJSON_GetArrayItem(ids, i), 1));
-    res = out;
+    for (int i = 0; i < n; i++) {
+      cJSON *x = cJSON_GetArrayItem(ids, i);
+      if (!cJSON_IsString(x)) continue;
+      char *err = NULL;
+      cJSON *o = resolve_cover_game(x->valuestring, "refresh", net, &err);
+      if (o) {
+        if (*J_str(o, "cover", "") || *J_str(o, "coverLocal", "")) count++;
+        cJSON_Delete(o);
+      }
+      if (err) g_host->dealloc(err);
+    }
+    res = cJSON_CreateObject();
+    cJSON_AddNumberToObject(res, "count", count);
   } else if (is_switch(channel, "games:scan") || is_switch(channel, "games:scanCandidates")) {
     /* 扫描：Steam + Epic + 注册表 + 常见目录 */
     mod_emit_json("games:scan-progress", "{\"phase\":\"steam\",\"name\":\"正在读取 Steam 库…\"}");
@@ -2285,23 +2757,57 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
   } else if (is_switch(channel, "games:uninstallInfo")) {
     cJSON *root = G_root();
     cJSON *g = G_find(root, mod_arg_str(args, 0, ""));
-    cJSON *o = cJSON_CreateObject();
-    if (g) {
-      cJSON_AddStringToObject(o, "name", J_str(g, "name", ""));
-      cJSON_AddStringToObject(o, "uninstallString", J_str(g, "uninstallString", ""));
-      cJSON_AddStringToObject(o, "path", J_str(g, "path", ""));
-      json_set_bool(o, "safe", J_str(g, "uninstallString", "")[0] ? 1 : 0);
-    }
+    res = g ? uninstall_info_of(g) : cJSON_CreateObject();
     cJSON_Delete(root);
-    res = o;
   } else if (is_switch(channel, "games:uninstall")) {
+    const char *id = mod_arg_str(args, 0, "");
+    cJSON *opts = mod_arg_obj(args, 1);
+    int want_remove = opts ? json_bool(opts, "removeRecord", 0) : 0;
     cJSON *root = G_root();
-    cJSON *g = G_find(root, mod_arg_str(args, 0, ""));
-    const char *us = g ? J_str(g, "uninstallString", "") : "";
+    cJSON *g = G_find(root, id);
+    cJSON *info = g ? uninstall_info_of(g) : NULL;
     cJSON_Delete(root);
-    if (!*us) { rc = -1; *out_error = mod_ret_error("没有卸载命令"); goto done; }
-    open_path(us);
-    res = cJSON_CreateBool(1);
+    if (!info) { rc = -1; *out_error = mod_ret_error("游戏不存在"); goto done; }
+    if (!json_bool(info, "safe", 0)) {
+      cJSON_Delete(info);
+      rc = -1;
+      *out_error = mod_ret_error("没有安全可用的卸载方式");
+      goto done;
+    }
+    const char *route = json_str(info, "route", "none");
+    char route_buf[32];
+    snprintf(route_buf, sizeof(route_buf), "%s", route);
+    const char *us = json_str(info, "uninstallString", "");
+    const char *path = json_str(info, "path", "");
+    const char *appid = json_str(info, "appid", "");
+    int ok = 0, removed = 0;
+    char msg[512] = "";
+    if (!strcmp(route, "platform") && *appid) {
+      char url[96];
+      snprintf(url, sizeof(url), "steam://uninstall/%s", appid);
+      wchar_t *w = u8_to_w(url);
+      HINSTANCE r = ShellExecuteW(NULL, L"open", w, NULL, NULL, SW_SHOWNORMAL);
+      free(w);
+      ok = (INT_PTR)r > 32;
+      snprintf(msg, sizeof(msg), ok ? "已调用 Steam 客户端卸载「%s」" : "调用 Steam 卸载失败", json_str(info, "name", ""));
+    } else if (!strcmp(route, "uninstaller")) {
+      ok = run_cmd_line(us);
+      snprintf(msg, sizeof(msg), ok ? "已启动卸载程序，请按它的提示完成" : "卸载程序启动失败");
+    } else if (!strcmp(route, "trash")) {
+      ok = delete_dir_recycle(path);
+      if (ok) removed = remove_game_record(id);
+      snprintf(msg, sizeof(msg), ok ? "已删除游戏目录（回收站）" : "删除目录失败（可能被占用）");
+    } else {
+      snprintf(msg, sizeof(msg), "没有可用的卸载方式");
+    }
+    cJSON_Delete(info);
+    if (!ok) { rc = -1; *out_error = mod_ret_error("%s", msg); goto done; }
+    if (want_remove && strcmp(route_buf, "trash")) removed = remove_game_record(id) || removed;
+    res = cJSON_CreateObject();
+    cJSON_AddBoolToObject(res, "ok", 1);
+    cJSON_AddStringToObject(res, "message", msg);
+    cJSON_AddStringToObject(res, "route", route_buf);
+    json_set_bool(res, "removed", removed);
   } else if (is_switch(channel, "games:mods")) {
     const char *id = mod_arg_str(args, 0, "");
     cJSON *o = mods_list(id, json_bool(mod_arg_obj(args, 1), "force", 0));
@@ -2534,6 +3040,17 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
     cJSON *root = G_root();
     cJSON *list = obj_get(root, "list");
     char *steamroot = steam_root_find();
+    cJSON *steamLib = NULL;
+    int steamTotal = 0;
+    double steamMinutes = 0;
+    if (steamroot) {
+      steam_library_cache(&steamLib, NULL, NULL);
+      if (steamLib) {
+        steamTotal = cJSON_GetArraySize(steamLib);
+        cJSON *sg = NULL;
+        cJSON_ArrayForEach(sg, steamLib) steamMinutes += J_num(sg, "minutes", 0);
+      }
+    }
     for (int i = 0; i < 7; i++) {
       cJSON *o = cJSON_CreateObject();
       cJSON_AddStringToObject(o, "id", ids[i]);
@@ -2562,10 +3079,17 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
         playtime += (int64_t)J_num(it, "playTime", 0);
       }
       cJSON *stats = cJSON_CreateObject();
-      cJSON_AddNumberToObject(stats, "games", count);
-      cJSON_AddNumberToObject(stats, "libraryGames", libs);
-      cJSON_AddNumberToObject(stats, "size", (double)size);
-      cJSON_AddNumberToObject(stats, "playtime", (double)playtime);
+      if (!strcmp(ids[i], "steam") && steamTotal > 0) {
+        cJSON_AddNumberToObject(stats, "games", libs);          /* 本机已安装 */
+        cJSON_AddNumberToObject(stats, "libraryGames", steamTotal > count ? steamTotal : count); /* 账号完整库 */
+        cJSON_AddNumberToObject(stats, "size", (double)size);
+        cJSON_AddNumberToObject(stats, "playtime", steamMinutes > playtime ? steamMinutes : (double)playtime);
+      } else {
+        cJSON_AddNumberToObject(stats, "games", count);
+        cJSON_AddNumberToObject(stats, "libraryGames", count);
+        cJSON_AddNumberToObject(stats, "size", (double)size);
+        cJSON_AddNumberToObject(stats, "playtime", (double)playtime);
+      }
       cJSON_AddItemToObject(o, "stats", stats);
       cJSON *acc = (!strcmp(ids[i], "steam")) ? steam_accounts() : cJSON_CreateArray();
       int nacc = cJSON_GetArraySize(acc);
@@ -2577,8 +3101,17 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
       cJSON_AddItemToArray(arr, o);
     }
     free(steamroot);
+    cJSON_Delete(steamLib);
     cJSON_Delete(root);
     res = arr;
+  } else if (is_switch(channel, "platform:syncSteam")) {
+    cJSON *lib = steam_sync_library(1, 7000);
+    int n = lib ? cJSON_GetArraySize(lib) : 0;
+    cJSON_Delete(lib);
+    res = cJSON_CreateObject();
+    json_set_bool(res, "ok", n > 0);
+    cJSON_AddNumberToObject(res, "count", n);
+    if (!n) cJSON_AddStringToObject(res, "error", "没能读取 Steam 账号库（资料页不可见或网络受限）");
   } else if (is_switch(channel, "platform:detail")) {
     cJSON *opts = mod_arg_obj(args, 0);
     const char *pid = opts ? J_str(opts, "platformId", "") : "";
@@ -2588,28 +3121,94 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
     int installedCount = 0;
     int64_t playtime = 0;
     cJSON *it = NULL;
-    cJSON_ArrayForEach(it, list) {
-      if (strcmp(J_str(it, "platform", "local"), pid)) continue;
-      cJSON *o = cJSON_CreateObject();
-      cJSON_AddStringToObject(o, "appid", J_str(it, "appid", ""));
-      cJSON_AddStringToObject(o, "name", J_str(it, "name", ""));
-      cJSON_AddStringToObject(o, "gid", J_str(it, "id", ""));
-      cJSON_AddStringToObject(o, "cover", J_str(it, "cover", ""));
-      json_set_bool(o, "installed", J_int(it, "installed", 1));
-      json_set_bool(o, "inLibrary", 1);
-      json_set_int(o, "playtime", J_int(it, "playTime", 0));
-      json_set_int(o, "lastPlayed", (int64_t)J_num(it, "lastPlayed", 0));
-      json_set_int(o, "size", (int64_t)J_num(it, "size", 0));
-      if (J_int(it, "installed", 1)) installedCount++;
-      playtime += (int64_t)J_num(it, "playTime", 0);
-      cJSON_AddItemToArray(games, o);
+    int force = opts ? json_bool(opts, "force", 0) : 0;
+    cJSON *steamLib = NULL;
+    if (!strcmp(pid, "steam")) steam_library_cache(&steamLib, NULL, NULL);
+    (void)force;
+    int steamAccount = steamLib ? 1 : 0;
+    if (steamLib) {
+      cJSON *sg = NULL;
+      cJSON_ArrayForEach(sg, steamLib) {
+        const char *appid = J_str(sg, "appid", "");
+        if (!*appid) continue;
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "appid", appid);
+        cJSON_AddStringToObject(o, "name", J_str(sg, "name", ""));
+        cJSON_AddStringToObject(o, "gid", "");
+        char curl[256];
+        snprintf(curl, sizeof(curl), "https://cdn.cloudflare.steamstatic.com/steam/apps/%s/library_600x900.jpg", appid);
+        cJSON_AddStringToObject(o, "cover", curl);
+        json_set_bool(o, "installed", 0);
+        json_set_bool(o, "inLibrary", 1);
+        json_set_int(o, "playtime", (int64_t)J_num(sg, "minutes", 0));
+        json_set_int(o, "lastPlayed", 0);
+        json_set_int(o, "size", 0);
+        cJSON_AddItemToArray(games, o);
+      }
+      /* 把本机已安装记录并进去：同一个 appid 就补 path/大小/图标，没进账号库的也补一款 */
+      cJSON_ArrayForEach(it, list) {
+        if (strcmp(J_str(it, "platform", "local"), pid)) continue;
+        char *aid = steam_appid_from_game(it);
+        cJSON *match = NULL;
+        if (aid && *aid) {
+          cJSON *g2 = NULL;
+          cJSON_ArrayForEach(g2, games) if (!strcmp(J_str(g2, "appid", ""), aid)) { match = g2; break; }
+        }
+        if (match) {
+          json_set_bool(match, "installed", 1);
+          J_set_str(match, "gid", J_str(it, "id", ""));
+          json_set_int(match, "size", (int64_t)J_num(it, "size", 0));
+          if ((int64_t)J_num(it, "lastPlayed", 0) > 0) json_set_int(match, "lastPlayed", (int64_t)J_num(it, "lastPlayed", 0));
+          int64_t pt = (int64_t)J_num(it, "playTime", 0);
+          if (pt > (int64_t)J_num(match, "playtime", 0)) json_set_int(match, "playtime", pt);
+          installedCount++;
+        } else {
+          cJSON *o = cJSON_CreateObject();
+          cJSON_AddStringToObject(o, "appid", aid ? aid : J_str(it, "appid", ""));
+          cJSON_AddStringToObject(o, "name", J_str(it, "name", ""));
+          cJSON_AddStringToObject(o, "gid", J_str(it, "id", ""));
+          cJSON_AddStringToObject(o, "cover", J_str(it, "cover", ""));
+          json_set_bool(o, "installed", 1);
+          json_set_bool(o, "inLibrary", 1);
+          json_set_int(o, "playtime", (int64_t)J_num(it, "playTime", 0));
+          json_set_int(o, "lastPlayed", (int64_t)J_num(it, "lastPlayed", 0));
+          json_set_int(o, "size", (int64_t)J_num(it, "size", 0));
+          cJSON_AddItemToArray(games, o);
+          installedCount++;
+        }
+        free(aid);
+      }
+      cJSON_ArrayForEach(it, games) playtime += (int64_t)J_num(it, "playtime", 0);
+      cJSON_Delete(steamLib);
+    } else {
+      cJSON_ArrayForEach(it, list) {
+        if (strcmp(J_str(it, "platform", "local"), pid)) continue;
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddStringToObject(o, "appid", J_str(it, "appid", ""));
+        cJSON_AddStringToObject(o, "name", J_str(it, "name", ""));
+        cJSON_AddStringToObject(o, "gid", J_str(it, "id", ""));
+        cJSON_AddStringToObject(o, "cover", J_str(it, "cover", ""));
+        json_set_bool(o, "installed", J_int(it, "installed", 1));
+        json_set_bool(o, "inLibrary", 1);
+        json_set_int(o, "playtime", J_int(it, "playTime", 0));
+        json_set_int(o, "lastPlayed", (int64_t)J_num(it, "lastPlayed", 0));
+        json_set_int(o, "size", (int64_t)J_num(it, "size", 0));
+        if (J_int(it, "installed", 1)) installedCount++;
+        playtime += (int64_t)J_num(it, "playTime", 0);
+        cJSON_AddItemToArray(games, o);
+      }
     }
+    /* 同一 appid 可能同时来自 Steam 扫描和注册表，列表已去重；
+       已安装数也要按去重后的列表算，不能按原始记录数 */
+    installedCount = 0;
+    cJSON_ArrayForEach(it, games) if (json_bool(it, "installed", 0)) installedCount++;
     cJSON *out = cJSON_CreateObject();
     cJSON_AddStringToObject(out, "id", pid);
     cJSON_AddStringToObject(out, "name", platform_name(pid));
     cJSON_AddNumberToObject(out, "total", cJSON_GetArraySize(games));
     cJSON_AddNumberToObject(out, "installedCount", installedCount);
     cJSON_AddNumberToObject(out, "playtime", (double)playtime);
+    json_set_bool(out, "accountLibrary", steamAccount);
     cJSON_AddItemToObject(out, "games", games);
     cJSON *acc2 = !strcmp(pid, "steam") ? steam_accounts() : cJSON_CreateArray();
     int n2 = cJSON_GetArraySize(acc2);

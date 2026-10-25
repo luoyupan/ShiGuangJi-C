@@ -117,10 +117,12 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 ### 游戏（games.dll）
 - 扫描 Steam 库（`libraryfolders.vdf` + `appmanifest_*.acf`）、Epic 清单、注册表卸载项、
   常见游戏目录；按名称自动归类（25 类词表）
-- 游戏库 CRUD、多分类、收藏、批量移除、封面（本地缓存优先 / Steam CDN 兜底）
+- 游戏库 CRUD、多分类、收藏、批量移除；封面从卸载串/目录反推 Steam AppID，优先本地 librarycache，其次 Steam CDN 下载缓存
 - 启动 / 停止 / **进程守护计时**（本地 exe 用 `CreateProcess` + 等退出；`steam://` 协议按
   主程序名轮询进程）；游玩统计（周/月/季/年/全部）
-- 平台总览（Steam 登录账号从 `config\loginusers.vdf` 读、客户端检测、库内统计）
+- 卸载：Steam 优先调用 `steam://uninstall/<appid>`；其它平台/本地优先跑自带卸载程序；
+  没有卸载器才把游戏目录移进回收站（平台记录会同步移除）
+- 平台总览（Steam 登录账号从 `config\loginusers.vdf` 读、客户端检测、库内统计；Steam 账号完整库后台同步并缓存，私密资料/断网时回退本机记录）
 - 隐藏空间：scrypt 密码（**和原版 `crypto.scryptSync` 参数完全一致**，老密码能直接解）、
   自动上锁、18+ 分类联动
 - MOD：目录规则引擎（Bethesda / 巫师 / 赛博朋克 / 黑神话 / 帕鲁 / 我的世界…）、
