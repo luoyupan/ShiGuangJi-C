@@ -1904,6 +1904,85 @@ static cJSON *daily_config(void) {
   return c;
 }
 
+/* ============================================================
+ *  网易云「每日推荐」歌单
+ * ------------------------------------------------------------
+ *  POST https://music.163.com/api/v3/discovery/recommend/songs
+ *  → data.dailySongs[]（30 首），每首：
+ *      name / ar[].name / al.name / al.picUrl / dt(毫秒)
+ *  🔴 不带 Cookie 也能拿到 30 首（拿到的是「游客口味」的推荐）；带上登录
+ *     Cookie 就是账号自己的每日推荐。所以 cookie 有就带、没有也照跑，
+ *     但要把「是不是登录态」如实告诉界面，别让人以为是自己账号的推荐。
+ *  🔴 这个接口只给「歌单」，不给可下载直链（版权），真正下载还是走音源站。
+ * ============================================================ */
+static cJSON *netease_daily_songs(int *out_logged, char **err) {
+  char *ck = login_cookie("netease");
+  int logged = ck && *ck;
+  size_t hcap = (ck ? strlen(ck) : 0) + 200;
+  char *headers = (char *)xmalloc(hcap);
+  if (logged) {
+    snprintf(headers, hcap,
+        "Cookie: %s\r\nContent-Type: application/x-www-form-urlencoded\r\n"
+        "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n", ck);
+  } else {
+    snprintf(headers, hcap,
+        "Content-Type: application/x-www-form-urlencoded\r\n"
+        "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n");
+  }
+  free(ck);
+  int status = 0;
+  /* body 必须非空并显式给长度 —— 空 body 直接传 NULL 会被站点当 GET 语义处理 */
+  const char *q = "csrf_token=";
+  char *body = g_host->http_request("POST",
+      "https://music.163.com/api/v3/discovery/recommend/songs",
+      headers, q, strlen(q), 15000, &status, NULL);
+  free(headers);
+  if (out_logged) *out_logged = logged;
+  if (!body) { if (err) *err = xstrdup("连不上网易云（网络不通）"); return NULL; }
+  if (status != 200) {
+    if (err) { char b[80]; snprintf(b, sizeof(b), "网易云返回 HTTP %d", status); *err = xstrdup(b); }
+    g_host->dealloc(body);
+    return NULL;
+  }
+  cJSON *j = cJSON_Parse(body);
+  g_host->dealloc(body);
+  if (!cJSON_IsObject(j)) {
+    if (j) cJSON_Delete(j);
+    if (err) *err = xstrdup("网易云返回的不是 JSON");
+    return NULL;
+  }
+  cJSON *code = cJSON_GetObjectItemCaseSensitive(j, "code");
+  cJSON *data = cJSON_GetObjectItemCaseSensitive(j, "data");
+  cJSON *songs = data ? cJSON_GetObjectItemCaseSensitive(data, "dailySongs") : NULL;
+  if (!cJSON_IsNumber(code) || code->valueint != 200 || !cJSON_IsArray(songs)) {
+    if (err) {
+      char b[96];
+      snprintf(b, sizeof(b), "网易云没给每日推荐（code=%d）", cJSON_IsNumber(code) ? code->valueint : -1);
+      *err = xstrdup(b);
+    }
+    cJSON_Delete(j);
+    return NULL;
+  }
+  cJSON *out = cJSON_Duplicate(songs, 1);
+  cJSON_Delete(j);
+  return out;
+}
+/* 把网易云的歌对象转成「曲库口径」：title / artist / album / cover / duration(秒) */
+static cJSON *netease_song_brief(const cJSON *s) {
+  cJSON *o = cJSON_CreateObject();
+  cJSON_AddStringToObject(o, "title", json_txt(s, "name", ""));
+  cJSON *ar = cJSON_GetObjectItemCaseSensitive(s, "ar");
+  cJSON *a0 = cJSON_IsArray(ar) ? cJSON_GetArrayItem(ar, 0) : NULL;
+  cJSON_AddStringToObject(o, "artist", cJSON_IsObject(a0) ? json_txt(a0, "name", "") : "");
+  cJSON *al = cJSON_GetObjectItemCaseSensitive(s, "al");
+  cJSON_AddStringToObject(o, "album", cJSON_IsObject(al) ? json_txt(al, "name", "") : "");
+  cJSON_AddStringToObject(o, "cover", cJSON_IsObject(al) ? json_txt(al, "picUrl", "") : "");
+  cJSON_AddNumberToObject(o, "duration", json_num(s, "dt", 0) / 1000.0);
+  char b[32]; snprintf(b, sizeof(b), "%.0f", json_num(s, "id", 0));
+  cJSON_AddStringToObject(o, "neteaseId", b);
+  return o;
+}
+
 static cJSON *M_daily_pull(char **out_error) {
   cJSON *cfg = daily_config();
   const char *dir = json_str(cfg, "dir", "");
@@ -1914,14 +1993,29 @@ static cJSON *M_daily_pull(char **out_error) {
   if (!*dir) { cJSON_Delete(cfg); *out_error = mod_ret_error("先在设置里选「每日音乐保存文件夹」"); return NULL; }
   path_mkdirs(dir);
 
-  /* 这一批要用哪些歌名：优先读上次「网易云歌单兜底」存下的曲目清单；
-     C 版没有登录态，拿不到官方「每日推荐」接口，别假装拿到。 */
-  cJSON *want = cJSON_GetObjectItemCaseSensitive(cfg, "want");
-  if (!cJSON_IsArray(want)) want = cJSON_GetObjectItemCaseSensitive(cfg, "queue");
-  if (!cJSON_IsArray(want)) want = NULL;
-  if (!want) {
+  /* ① 先拉网易云「每日推荐」歌单 —— 这是这一步的主路径。
+        拉到就用它当这批清单；拉不到才退回本地队列（老行为）。 */
+  int logged = 0;
+  char *daily_err = NULL;
+  cJSON *songs = netease_daily_songs(&logged, &daily_err);
+  cJSON *want = NULL;
+  const char *batchSource = "daily";
+  if (cJSON_IsArray(songs) && cJSON_GetArraySize(songs) > 0) {
+    /* 转成统一口径，后面下载逻辑只认 title/artist */
+    want = cJSON_CreateArray();
+    cJSON *s = NULL;
+    cJSON_ArrayForEach(s, songs) cJSON_AddItemToArray(want, netease_song_brief(s));
+  } else {
+    batchSource = "playlist";
+    free(daily_err); daily_err = NULL;
+    if (songs) { cJSON_Delete(songs); songs = NULL; }
+    cJSON *q = cJSON_GetObjectItemCaseSensitive(cfg, "want");
+    if (!cJSON_IsArray(q)) q = cJSON_GetObjectItemCaseSensitive(cfg, "queue");
+    if (cJSON_IsArray(q) && cJSON_GetArraySize(q) > 0) want = cJSON_Duplicate(q, 1);
+  }
+  if (!want || !cJSON_GetArraySize(want)) {
     cJSON_Delete(cfg);
-    *out_error = mod_ret_error("这一批还没有歌单来源：先在上面「导入 / 外部歌单」里选一个歌单，再点立即拉取");
+    *out_error = mod_ret_error("网易云每日推荐没拿到，本地也没有可用的歌单队列（可在「导入 / 外部歌单」里选一个歌单兜底）");
     return NULL;
   }
 
@@ -1969,6 +2063,7 @@ static cJSON *M_daily_pull(char **out_error) {
         char fn[MAX_PATH];
         if (*artist) snprintf(fn, sizeof(fn), "%s - %s.%s", artist, title, mi ? json_txt(mi, "format", "mp3") : "mp3");
         else snprintf(fn, sizeof(fn), "%s.%s", title, mi ? json_txt(mi, "format", "mp3") : "mp3");
+        sanitize_filename(fn); /* 标题可能带 / 等非法字符：不清洗的话 lrc 路径会拼出目录 */
         /* 直接走 hicn_download_ex：它会自己搜/取直链/落盘，并把**真实路径**
            （可能带 " (2)" 防重名后缀）回填，界面拿到的 file 才对得上 */
         char *real = NULL;
@@ -2009,9 +2104,15 @@ static cJSON *M_daily_pull(char **out_error) {
   snprintf(date, sizeof(date), "%04d-%02d-%02d", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
   cJSON *batch = cJSON_CreateObject();
   cJSON_AddStringToObject(batch, "date", date);
-  cJSON_AddStringToObject(batch, "platform", "kuwo");
-  cJSON_AddStringToObject(batch, "source", "playlist");
-  cJSON_AddStringToObject(batch, "playlist", json_str(cfg, "playlistName", "我的歌单"));
+  cJSON_AddStringToObject(batch, "platform", "netease");
+  cJSON_AddStringToObject(batch, "source", batchSource);
+  if (!strcmp(batchSource, "daily")) {
+    /* logged=false 时界面要能一眼看出「这是游客口味，不是你账号的推荐」 */
+    json_set_bool(batch, "logged", logged);
+    cJSON_AddStringToObject(batch, "playlist", "");
+  } else {
+    cJSON_AddStringToObject(batch, "playlist", json_str(cfg, "playlistName", "我的歌单"));
+  }
   cJSON_AddItemToObject(batch, "items", items);
   cJSON_DeleteItemFromObjectCaseSensitive(cfg, "batch");
   cJSON_AddItemToObject(cfg, "batch", cJSON_Duplicate(batch, 1));
