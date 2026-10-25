@@ -301,6 +301,8 @@ contextBridge.exposeInMainWorld('SGJ', {
     addRoot: (dir) => inv('photos:addRoot', dir),
     removeRoot: (dir) => inv('photos:removeRoot', dir),
     setPlace: (id, place) => inv('photos:setPlace', { id, place }),
+    setPlaces: (ids, place) => inv('photos:setPlaces', { ids, place }),
+    geocode: (q) => inv('photos:geocode', q),
     clearPlace: (id) => inv('photos:clearPlace', id),
     setSort: (mode) => inv('photos:setSort', mode),
     mapConfig: (patch) => inv('photos:mapConfig', patch || {}),

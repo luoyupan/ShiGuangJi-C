@@ -72,6 +72,11 @@
 
 /* ---------------- 图片墙 ---------------- */
 .photos .ph-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+/* 足迹页：地图吃掉纵向剩余空间，窗口拉高时自动变高，不再固定 440px */
+.photos .ph-body.is-map { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.photos .ph-body.is-map .ph-map-bar { flex: 0 0 auto; padding: 10px 16px; }
+.photos .ph-body.is-map .ph-map { flex: 1 1 auto; height: auto; min-height: 280px; margin: 10px 16px 8px; }
+.photos .ph-body.is-map .ph-miss { flex: 0 0 auto; padding: 0 16px 10px; max-height: 138px; overflow: auto; }
 .photos .ph-day { margin-bottom: 14px; }
 /* ⚠️ sticky 的日期条一定要 `display:inline-block` —— 块级的话背景会横贯整行，
    看着像一条「空表格行」而不是日期标签（试出来的，不是猜的） */
@@ -181,9 +186,12 @@
 .pv-layer[hidden] { display: none; }
 .pv-box {
   background: var(--surface); border-radius: 14px; border: 1px solid var(--border);
-  box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: min(1000px, 92vw);
-  max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: min(1200px, 95vw);
+  max-height: 94vh; display: flex; flex-direction: column; overflow: hidden;
 }
+/* 大图：尽量吃满窗口，竖图也不留一条小黑边 */
+.pv-box.pv-viewer { width: min(1280px, 95vw); height: min(90vh, 980px); max-width: none; }
+.pv-viewer .pv-img img { width: 100%; height: 100%; max-height: none; object-fit: contain; }
 .pv-head {
   display: flex; align-items: center; gap: 10px; padding: 10px 14px;
   border-bottom: 1px solid var(--border);
@@ -214,10 +222,10 @@
 .pv-gn { font-size: 10px; padding: 3px 4px; display: block; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 标坐标 */
-.pv-place { width: min(620px, 92vw); }
-.pv-place-body { display: flex; gap: 14px; padding: 12px 14px; }
-.pv-place-img { flex: 0 0 148px; }
-.pv-place-img img { width: 148px; height: 108px; object-fit: cover; border-radius: 8px; background: var(--surface-2); opacity: 0; }
+.pv-place { width: min(780px, 95vw); }
+.pv-place-body { display: flex; gap: 16px; padding: 14px 16px; }
+.pv-place-img { flex: 0 0 210px; }
+.pv-place-img img { width: 210px; height: 150px; object-fit: cover; border-radius: 8px; background: var(--surface-2); opacity: 0; }
 .pv-place-img img.on { opacity: 1; }
 .pv-place-form { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
 .pv-place-form .hint { margin: 0; font-size: 12px; }
@@ -230,3 +238,57 @@
 .ph-inp:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 .ph-col { display: flex; flex-direction: column; gap: 7px; }
 .ph-err { color: var(--danger, #d33); font-size: 12px; margin: 0; flex: 1; }
+
+/* ---------------- 批量标注 ---------------- */
+.photos .ph-selbar {
+  display: flex; align-items: center; gap: 8px; padding: 7px 16px;
+  border-bottom: 1px solid var(--border); background: var(--accent-soft);
+  flex: 0 0 auto; font-size: 12px;
+}
+.photos .ph-selbar[hidden] { display: none; }
+.photos .ph-sel-n { color: var(--text); white-space: nowrap; }
+.photos .ph-sel-n b { font-size: 15px; color: var(--accent); margin: 0 2px; }
+.photos .ph-sel-tip { color: var(--text-mute); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.photos .ph-card .ph-check,
+.photos .ph-miss-i .ph-check {
+  position: absolute; top: 6px; left: 6px; width: 20px; height: 20px; border-radius: 50%;
+  background: rgba(0,0,0,.42); border: 1px solid rgba(255,255,255,.9); color: #fff;
+  display: grid; place-items: center; font-size: 12px; font-weight: 700; z-index: 4;
+  pointer-events: none;
+}
+.photos .ph-card .ph-check.on,
+.photos .ph-miss-i .ph-check.on { background: var(--accent); border-color: var(--accent); }
+.photos .ph-card.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.photos .ph-miss-i { position: relative; }
+.photos .ph-miss-i.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+.photos .ph-card.selecting { cursor: pointer; }
+.photos .ph-card.selecting .ph-edit { display: none; }
+
+/* ---------------- 地名搜索 ---------------- */
+.ph-geo { display: flex; flex-direction: column; gap: 5px; }
+.ph-geo-res { display: flex; flex-direction: column; gap: 3px; max-height: 148px; overflow: auto; }
+.ph-geo-i {
+  display: flex; flex-direction: column; gap: 1px; text-align: left; width: 100%;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text);
+  border-radius: 7px; padding: 5px 8px; cursor: pointer;
+}
+.ph-geo-i b { font-size: 12px; font-weight: 600; }
+.ph-geo-i span { font-size: 10px; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ph-geo-i:hover, .ph-geo-i.on { border-color: var(--accent); background: var(--accent-soft); }
+.ph-geo-empty { margin: 2px 0; font-size: 11px; color: var(--text-mute); }
+
+/* ---------------- 批量标地点弹窗 ---------------- */
+.pv-batch { width: min(940px, 96vw); }
+.pv-batch-body { align-items: flex-start; }
+.pv-batch-side { flex: 0 0 320px; min-width: 0; }
+.pv-batch-prev { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.pv-batch-th { min-width: 0; border-radius: 6px; overflow: hidden; background: var(--surface-2); border: 1px solid var(--border); }
+.pv-batch-th img { width: 100%; height: 62px; object-fit: cover; display: block; opacity: 0; transition: opacity .2s; }
+.pv-batch-th img.on { opacity: 1; }
+.pv-batch-th span { display: block; font-size: 9px; color: var(--text-mute); padding: 2px 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-batch .pv-place-form { gap: 6px; }
+@media (max-width: 900px) {
+  .pv-batch-body { flex-direction: column; }
+  .pv-batch-side { flex: 0 0 auto; width: 100%; }
+  .pv-batch-prev { grid-template-columns: repeat(8, 1fr); }
+}

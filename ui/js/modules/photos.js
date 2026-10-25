@@ -46,6 +46,8 @@
     mapView: 'china',   // china | world
     mapInst: null,
     picking: null,      // 自定义坐标时「在地图上取点」的回调
+    selecting: false,   // 批量标地点：选择模式
+    selected: new Set(),
     kw: '',
     _seq: 0,            // 代次守卫：异步回来先问「还是这一屏吗」
     _scanning: false,
@@ -73,6 +75,9 @@
 
     /** 离场清理：地图实例一定要 destroy（它有 ResizeObserver / rAF / 定时器） */
     detach() {
+      this.selecting = false;
+      this.selected.clear();
+      this.picking = null;
       this.closeViewer();
       if (this.mapInst) { try { this.mapInst.destroy(); } catch { /* 已经没了 */ } }
       this.mapInst = null;
@@ -213,6 +218,8 @@
        右侧：工具行 + 内容（图片墙 / 足迹地图）
        ============================================================ */
     renderMain() {
+      /* 重画足迹页前先销毁旧地图：它有 ResizeObserver / rAF，不能只把 DOM 删掉 */
+      if (this.mapInst) { try { this.mapInst.destroy(); } catch { /* 已经没了 */ } this.mapInst = null; }
       const main = clear(this.mainEl);
 
       /* ---- 工具行 ---- */
@@ -226,6 +233,11 @@
             class: 'ph-tab' + (this.view === 'map' ? ' on' : ''),
             onclick: () => { this.view = 'map'; this.renderMain(); }
           }, uiSpan('pin'), '足迹')),
+        el('button', {
+          class: 'btn btn-sm' + (this.selecting ? ' btn-primary' : ''),
+          title: '批量给多张照片标同一个地点',
+          onclick: () => this.toggleSelecting()
+        }, uiSpan('pin'), this.selecting ? '退出批量' : '批量标注'),
         this.view === 'wall' ? el('div', { class: 'ph-bar-right' },
           uiSpan('search'),
           el('input', {
@@ -249,11 +261,70 @@
       main.appendChild(bar);
       main.appendChild(prog);
 
-      const body = el('div', { class: 'ph-body', id: 'phBody' });
+      /* 批量选择条 */
+      const selbar = el('div', { class: 'ph-selbar', id: 'phSelBar', hidden: !this.selecting },
+        el('span', { class: 'ph-sel-n' }, el('b', { id: 'phSelCount', text: String(this.selected.size) }), ' 张已选'),
+        el('span', { class: 'ph-sel-tip', text: this.selecting ? '点照片选择；批量标同一个地点' : '' }),
+        el('button', { class: 'btn btn-sm btn-ghost', onclick: () => this.selectMissing() }, '全选未标'),
+        el('button', { class: 'btn btn-sm btn-ghost', onclick: () => this.clearSelection() }, '清空'),
+        el('button', { class: 'btn btn-sm btn-primary', onclick: () => this.openBatchPlace() }, '批量标地点'),
+        el('button', { class: 'btn btn-sm', onclick: () => this.toggleSelecting(false) }, '退出'));
+      main.appendChild(selbar);
+
+      const body = el('div', { class: 'ph-body' + (this.view === 'map' ? ' is-map' : ''), id: 'phBody' });
       main.appendChild(body);
 
       if (this.view === 'map') this.drawMap(body);
       else this.drawWall(body);
+      this.updateSelBar();
+    },
+
+    /* ---------------- 批量选择 ---------------- */
+    toggleSelecting(force) {
+      this.selecting = force === undefined ? !this.selecting : !!force;
+      if (!this.selecting) this.selected.clear();
+      this.renderMain();
+    },
+    toggleSelect(item, cardEl) {
+      const id = String(item.id);
+      if (this.selected.has(id)) this.selected.delete(id);
+      else this.selected.add(id);
+      const on = this.selected.has(id);
+      if (cardEl) {
+        cardEl.classList.toggle('sel', on);
+        const ch = cardEl.querySelector('.ph-check');
+        if (ch) { ch.classList.toggle('on', on); ch.textContent = on ? '✓' : ''; }
+      }
+      this.updateSelBar();
+    },
+    updateSelBar() {
+      const n = document.getElementById('phSelCount');
+      if (n) n.textContent = String(this.selected.size);
+      const b = document.getElementById('phSelBar');
+      if (b) b.hidden = !this.selecting;
+    },
+    clearSelection() {
+      this.selected.clear();
+      for (const c of document.querySelectorAll('.ph-card.sel, .ph-miss-i.sel')) {
+        c.classList.remove('sel');
+        const ch = c.querySelector('.ph-check');
+        if (ch) { ch.classList.remove('on'); ch.textContent = ''; }
+      }
+      this.updateSelBar();
+    },
+    selectMissing() {
+      const PL = window.PhotoLib;
+      for (const it of this.items) {
+        if (!PL.pointOf(it, this.st.places || {})) this.selected.add(String(it.id));
+      }
+      for (const c of document.querySelectorAll('.ph-card[data-pid], .ph-miss-i[data-pid]')) {
+        const on = this.selected.has(String(c.dataset.pid));
+        c.classList.toggle('sel', on);
+        const ch = c.querySelector('.ph-check');
+        if (ch) { ch.classList.toggle('on', on); ch.textContent = on ? '✓' : ''; }
+      }
+      this.updateSelBar();
+      window.Shell.toast(`已选 ${this.selected.size} 张没有坐标的照片`);
     },
 
     /* ---------------- 图片墙 ---------------- */
@@ -290,16 +361,21 @@
       const g = el('div', { class: 'ph-grid' });
       for (const it of list) {
         const kind = window.PhotoLib.placeKind(it, this.st.places || {});
+        const on = this.selected.has(String(it.id));
         g.appendChild(el('div', {
-          class: 'ph-card' + (kind ? ' has-pos' : ''),
+          class: 'ph-card' + (kind ? ' has-pos' : '') + (this.selecting ? ' selecting' : '') + (on ? ' sel' : ''),
           dataset: { pid: String(it.id) },
           title: it.name,
-          onclick: () => this.openViewer(it)
+          onclick: (e) => {
+            if (this.selecting) this.toggleSelect(it, e.currentTarget);
+            else this.openViewer(it);
+          }
         },
           el('div', { class: 'ph-thumb' },
             el('img', { dataset: { file: it.path, id: String(it.id) }, alt: it.name, loading: 'lazy' }),
             kind ? el('span', { class: 'ph-badge ' + kind, title: kind === 'exif' ? '照片自带坐标' : '手动标注的坐标' },
-              uiSpan('pin')) : null),
+              uiSpan('pin')) : null,
+            this.selecting ? el('span', { class: 'ph-check' + (on ? ' on' : ''), text: on ? '✓' : '' }) : null),
           el('div', { class: 'ph-meta' },
             el('div', { class: 'ph-name', text: it.name }),
             el('div', { class: 'ph-sub', text: this.subOf(it) })),
@@ -415,12 +491,15 @@
             el('span', { class: 'text-dim', text: '标一个坐标，它就会出现在地图上' })));
         const row = el('div', { class: 'ph-miss-row' });
         for (const it of noPos.slice(0, 24)) {
+          const on = me.selected.has(String(it.id));
           row.appendChild(el('button', {
-            class: 'ph-miss-i', title: it.name, dataset: { pid: String(it.id) },
-            onclick: () => me.editPlace(it)
+            class: 'ph-miss-i' + (me.selecting ? ' selecting' : '') + (on ? ' sel' : ''),
+            title: it.name, dataset: { pid: String(it.id) },
+            onclick: (e) => me.selecting ? me.toggleSelect(it, e.currentTarget) : me.editPlace(it)
           },
             el('img', { dataset: { file: it.path, id: String(it.id) }, alt: it.name }),
-            el('span', { class: 'ph-miss-n', text: it.name })));
+            el('span', { class: 'ph-miss-n', text: it.name }),
+            me.selecting ? el('span', { class: 'ph-check' + (on ? ' on' : ''), text: on ? '✓' : '' }) : null));
         }
         miss.appendChild(row);
         box.appendChild(miss);
@@ -473,7 +552,7 @@
     openViewer(item) {
       const layer = this.layer();
       const idx = this.shown.findIndex((x) => String(x.id) === String(item.id));
-      const box = el('div', { class: 'pv-box' },
+      const box = el('div', { class: 'pv-box pv-viewer' },
         el('div', { class: 'pv-head' },
           el('span', { class: 'pv-title', text: item.name }),
           el('div', { class: 'pv-head-r' },
@@ -545,6 +624,126 @@
       if (f) { f.hidden = true; }
     },
 
+    /* ---------------- 地点搜索 / 批量标地点 ---------------- */
+    geoPicker(onPick) {
+      const q = el('input', { class: 'ph-inp', type: 'text', placeholder: '输入地名，如 上海 / 京都' });
+      const label = el('span', { text: '搜索' });
+      const btn = el('button', { class: 'btn btn-sm', type: 'button' }, uiSpan('search'), label);
+      const out = el('div', { class: 'ph-geo-res' });
+      const run = async () => {
+        const text = String(q.value || '').trim();
+        if (!text) { q.focus(); return; }
+        btn.disabled = true; label.textContent = '搜索中…'; out.innerHTML = '';
+        try {
+          const list = await API.raw.photos.geocode(text);
+          if (!Array.isArray(list) || !list.length) {
+            out.appendChild(el('p', { class: 'ph-geo-empty', text: '没找到，换个写法试试（如「杭州市」「Kyoto」）' }));
+            return;
+          }
+          for (const r of list.slice(0, 8)) {
+            out.appendChild(el('button', {
+              class: 'ph-geo-i', type: 'button', title: r.address || r.name,
+              onclick: (e) => {
+                for (const b of out.querySelectorAll('.on')) b.classList.remove('on');
+                e.currentTarget.classList.add('on');
+                onPick(r);
+              }
+            },
+              el('b', { text: r.name || r.address }),
+              el('span', { text: [r.address, r.source].filter(Boolean).join(' · ') })));
+          }
+        } catch (e) {
+          out.appendChild(el('p', { class: 'ph-geo-empty', text: (e && e.message) || '搜索失败，检查一下网络' }));
+        } finally {
+          btn.disabled = false; label.textContent = '搜索';
+        }
+      };
+      btn.onclick = run;
+      q.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); run(); } });
+      return {
+        wrap: el('div', { class: 'ph-geo' }, el('div', { class: 'ph-row' },
+          el('span', { class: 'label', text: '搜地点' }), q, btn), out),
+        q
+      };
+    },
+
+    openBatchPlace(prefill) {
+      if (!this.selected.size) { window.Shell.toast('先点选要标地点的照片'); return; }
+      const ids = [...this.selected];
+      const items = this.items.filter((x) => this.selected.has(String(x.id)));
+      const p = prefill || {};
+      const lat = el('input', { class: 'ph-inp', type: 'text', inputmode: 'decimal', placeholder: '纬度，如 39.9042', value: p.lat !== undefined ? Number(p.lat).toFixed(5) : '' });
+      const lng = el('input', { class: 'ph-inp', type: 'text', inputmode: 'decimal', placeholder: '经度，如 116.4074', value: p.lng !== undefined ? Number(p.lng).toFixed(5) : '' });
+      const nm = el('input', { class: 'ph-inp', type: 'text', placeholder: '地点名（可留空）', value: p.name || '' });
+      const err = el('p', { class: 'ph-err', hidden: true });
+      const layer = this.layer();
+      const geo = this.geoPicker((r) => {
+        lat.value = Number(r.lat).toFixed(5);
+        lng.value = Number(r.lng).toFixed(5);
+        if (!nm.value) nm.value = r.name || '';
+        err.hidden = true;
+      });
+
+      const prev = el('div', { class: 'pv-batch-prev' });
+      for (const it of items.slice(0, 8)) {
+        prev.appendChild(el('div', { class: 'pv-batch-th', title: it.name },
+          el('img', { dataset: { file: it.path, id: String(it.id) }, alt: it.name }),
+          el('span', { text: it.name })));
+      }
+
+      const box = el('div', { class: 'pv-box pv-place pv-batch' },
+        el('div', { class: 'pv-head' },
+          el('span', { class: 'pv-title', text: `给 ${items.length} 张照片标地点` }),
+          el('button', { class: 'pv-x', onclick: () => this.closeViewer() }, uiSpan('close'))),
+        el('div', { class: 'pv-place-body pv-batch-body' },
+          el('div', { class: 'pv-batch-side' }, prev,
+            el('p', { class: 'hint', text: `已选 ${items.length} 张。带 GPS 的照片仍以照片自带坐标为优先。` })),
+          el('div', { class: 'pv-place-form' },
+            el('p', { class: 'hint', text: '输入地名搜索，或直接填经纬度；保存后所有选中的照片都会标到同一个点。' }),
+            geo.wrap,
+            el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '地点名' }), nm),
+            el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '纬度' }), lat),
+            el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '经度' }), lng),
+            el('div', { class: 'ph-row' },
+              el('button', {
+                class: 'btn btn-sm',
+                onclick: () => {
+                  const keep = [...this.selected];
+                  this.closeViewer();
+                  this.view = 'map';
+                  this.renderMain();
+                  this.picking = (ll) => {
+                    this.selected = new Set(keep);
+                    this.openBatchPlace({ lat: ll.lat, lng: ll.lng, name: nm.value });
+                  };
+                  window.Shell.toast('在地图上点一下，就取那个位置的坐标', 'ok');
+                }
+              }, uiSpan('map'), '在地图上点一下取点')),
+            err)));
+
+      box.appendChild(el('div', { class: 'pv-foot', style: { justifyContent: 'flex-end' } },
+        el('button', { class: 'btn btn-sm', onclick: () => this.closeViewer() }, '取消'),
+        el('button', {
+          class: 'btn btn-sm btn-primary', onclick: async () => {
+            err.hidden = true;
+            try {
+              const r = await API.raw.photos.setPlaces(ids, { lat: lat.value, lng: lng.value, name: nm.value });
+              window.Shell.toast(`已给 ${r.count} 张照片标上地点`, 'ok');
+              this.selecting = false;
+              this.selected.clear();
+              this.closeViewer();
+              await this.reload();
+            } catch (e) {
+              err.textContent = (e && e.message) || '坐标不合法';
+              err.hidden = false;
+            }
+          }
+        }, '保存到这些照片')));
+      layer.appendChild(box);
+      layer.onclick = (e) => { if (e.target === layer) this.closeViewer(); };
+      this.ensureThumbs(prev);
+    },
+
     /* ---------------- 自定义坐标 ---------------- */
     editPlace(item) {
       const places = this.st.places || {};
@@ -555,6 +754,12 @@
       const lng = el('input', { class: 'ph-inp', type: 'text', inputmode: 'decimal', placeholder: '经度，如 116.4074', value: cur ? String(cur.lng) : '' });
       const nm = el('input', { class: 'ph-inp', type: 'text', placeholder: '地点名（可留空）', value: cur ? String(cur.name || '') : '' });
       const err = el('p', { class: 'ph-err', hidden: true });
+      const geo = this.geoPicker((r) => {
+        lat.value = Number(r.lat).toFixed(5);
+        lng.value = Number(r.lng).toFixed(5);
+        if (!nm.value) nm.value = r.name || '';
+        err.hidden = true;
+      });
 
       const box = el('div', { class: 'pv-box pv-place' },
         el('div', { class: 'pv-head' },
@@ -566,7 +771,8 @@
             el('p', { class: 'ph-name', text: item.name }),
             hasExif
               ? el('p', { class: 'hint', text: '这张照片自带坐标 ' + window.PhotoLib.fmtLatLng(item.gps.lat, item.gps.lng) + '，地图上按自带的显示。这里填的是「你自己记的地点」，一般不用填。' })
-              : el('p', { class: 'hint', text: '照片里没有 GPS 信息。填一个坐标（或在地图上点一下），它就会出现在足迹地图上。' }),
+              : el('p', { class: 'hint', text: '照片里没有 GPS 信息。可以搜地名自动填坐标，也可以手填或在地图上点一下。' }),
+            geo.wrap,
             el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '地点名' }), nm),
             el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '纬度' }), lat),
             el('div', { class: 'ph-row' }, el('span', { class: 'label', text: '经度' }), lng),
