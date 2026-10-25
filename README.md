@@ -135,10 +135,11 @@ build\ui\            （开发态用；发布时可删，exe 走内嵌 UI_ZIP）
 ### 音乐（music.dll）
 - 递归扫描曲库，**按文件头魔数**认格式（MP3 / FLAC / M4A / OGG / Opus / WAV…），
   不看扩展名；ID3v2 / Vorbis Comment / MP4 atom 读标题、歌手、专辑，抽内嵌封面
-- 封面缓存、空封面/死链自愈、LRC 库级递归匹配（同目录 / 同名 / 标题-歌手）
-- 歌单 CRUD、导入 m3u/m3u8/pls/txt/json、导出 m3u8
+- 封面缓存、空封面/死链自愈；内嵌封面读不到时依次找同目录 cover/folder/front，再按歌名+歌手查网易云专辑图；下载的歌走同一条链
+- 歌单 CRUD、导入 m3u/m3u8/pls/txt/json、导出 m3u8；网易云公开歌单链接可直接预览 / 导入并匹配本地曲库
 - 播放交给 `<audio>`，音频走宿主的 `/local` 代理（**支持 Range**，FLAC 也能拖进度）
 - 听歌统计（天桶、周/月/年、日历热力、唱片墙、单曲/音乐人 TOP、语言占比）
+- 网站抓取（HTML/JS 里的音频直链）、服务器 / NAS（目录页 / JSON / WebDAV）浏览、下载后自动入库并读封面
 
 
 ### 图片（photos.dll）

@@ -7,10 +7,12 @@
  * ============================================================ */
 #include "../module_common.h"
 #include <wincrypt.h>
+#include <shlobj.h>
 
 static const char *g_manifest = NULL;
 static const char *g_js = NULL;
 static SgjModule g_mod;
+static cJSON *get_defaults(const char *key);
 
 /* ---------------- 小工具 ---------------- */
 static char *M_id(void) {
@@ -42,6 +44,11 @@ static cJSON *ms_get_root(void) {
   return r;
 }
 static void ms_save(cJSON *r) { mod_store_set("music", r); }
+static void m_set(cJSON *o, const char *k, cJSON *v) {
+  if (!o || !k) { cJSON_Delete(v); return; }
+  cJSON_DeleteItemFromObjectCaseSensitive(o, k);
+  if (v) cJSON_AddItemToObject(o, k, v);
+}
 static void ms_emit(const char *reason) {
   cJSON *o = cJSON_CreateObject();
   cJSON_AddStringToObject(o, "reason", reason ? reason : "update");
@@ -716,6 +723,90 @@ static int path_under(const char *path, const char *root) {
   return path[n] == 0 || path[n] == '\\' || path[n] == '/';
 }
 
+/* ---------------- 封面兜底：同目录图片 → 网易云专辑图 ----------------
+   内嵌封面由 sniff_meta 读；很多从网盘/网站下的 FLAC 没有内嵌图，
+   这时先找同目录 cover/folder/front，再按 歌名+歌手 查一次专辑封面。 */
+static char *cover_url_of(const char *path) {
+  size_t n = strlen(path);
+  char *u = (char *)xmalloc(n + 12);
+  sprintf(u, "file:///%s", path);
+  for (char *p = u + 8; *p; p++) if (*p == '\\') *p = '/';
+  return u;
+}
+static char *folder_cover_for(const char *audio_path) {
+  char *dir = path_dirname(audio_path);
+  const char *names[] = { "cover.jpg", "folder.jpg", "front.jpg", "album.jpg",
+    "Cover.jpg", "Folder.jpg", "封面.jpg", "cover.png", "folder.png", "front.png", NULL };
+  for (int i = 0; names[i]; i++) {
+    char *p = path_join(dir, names[i]);
+    if (path_exists(p)) { char *u = cover_url_of(p); free(p); free(dir); return u; }
+    free(p);
+  }
+  free(dir);
+  return NULL;
+}
+static char *online_cover_for(const char *path, const char *title, const char *artist) {
+  if (!title || !*title) return NULL;
+  char q[512];
+  snprintf(q, sizeof(q), "%s %s", title, artist ? artist : "");
+  char *enc = url_encode(q);
+  if (!enc) return NULL;
+  size_t cap = strlen(enc) + 128;
+  char *url = (char *)xmalloc(cap);
+  snprintf(url, cap, "https://music.163.com/api/search/get/web?s=%s&type=1&limit=3&offset=0", enc);
+  int status = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n",
+      NULL, 0, 3500, &status, NULL);
+  free(url); free(enc);
+  if (!body) return NULL;
+  long album_id = 0;
+  if (status == 200) {
+    cJSON *j = cJSON_Parse(body);
+    cJSON *songs = j ? cJSON_GetObjectItemCaseSensitive(cJSON_GetObjectItemCaseSensitive(j, "result"), "songs") : NULL;
+    cJSON *s0 = cJSON_GetArrayItem(songs, 0);
+    cJSON *al = s0 ? cJSON_GetObjectItemCaseSensitive(s0, "album") : NULL;
+    album_id = (long)json_num(al, "id", 0);
+    cJSON_Delete(j);
+  }
+  g_host->dealloc(body);
+  if (album_id <= 0) return NULL;
+  url = (char *)xmalloc(cap);
+  snprintf(url, cap, "https://music.163.com/api/v1/album/%ld", album_id);
+  status = 0;
+  body = g_host->http_request("GET", url,
+      "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n",
+      NULL, 0, 3500, &status, NULL);
+  free(url);
+  if (!body) return NULL;
+  char *pic = NULL;
+  if (status == 200) {
+    cJSON *j = cJSON_Parse(body);
+    cJSON *al = j ? cJSON_GetObjectItemCaseSensitive(j, "album") : NULL;
+    const char *p = al ? json_str(al, "picUrl", "") : "";
+    if (*p) pic = xstrdup(p);
+    cJSON_Delete(j);
+  }
+  g_host->dealloc(body);
+  if (!pic) return NULL;
+  status = 0;
+  size_t ilen = 0;
+  unsigned char *img = (unsigned char *)g_host->http_request("GET", pic,
+      "Accept: image/*\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n",
+      NULL, 0, 5000, &status, &ilen);
+  free(pic);
+  if (!img || status != 200 || ilen < 500) { if (img) g_host->dealloc(img); return NULL; }
+  char key[160];
+  unsigned long long h = 1469598103934665603ULL;
+  for (const char *p = path; *p; p++) { h ^= (unsigned char)*p; h *= 1099511628211ULL; }
+  snprintf(key, sizeof(key), "online_%016llx", h);
+  char *cp = cover_path_for(key, img, ilen, "image/jpeg");
+  g_host->dealloc(img);
+  char *u = cp ? cover_url_of(cp) : NULL;
+  free(cp);
+  return u;
+}
+
 static cJSON *track_json(const char *path, TrackMeta *m, const char *lrc_path) {
   cJSON *o = cJSON_CreateObject();
   char *id = M_id();
@@ -782,6 +873,7 @@ static cJSON *M_scan(void) {
   }
   /* 补封面（库里空封面 / 缓存被清） */
   int covers = 0;
+  int online_budget = 8;
   cJSON_ArrayForEach(t, keep) {
     const char *cv = json_str(t, "cover", "");
     int need = 0;
@@ -792,8 +884,20 @@ static cJSON *M_scan(void) {
       free(p);
     }
     if (!need) continue;
-    TrackMeta m; sniff_meta(json_str(t, "path", ""), &m);
-    if (m.cover[0]) { cJSON_DeleteItemFromObjectCaseSensitive(t, "cover"); cJSON_AddStringToObject(t, "cover", m.cover); covers++; }
+    const char *tp = json_str(t, "path", "");
+    TrackMeta m; sniff_meta(tp, &m);
+    char *gotcv = m.cover[0] ? xstrdup(m.cover) : folder_cover_for(tp);
+    if (!gotcv && online_budget > 0) {
+      gotcv = online_cover_for(tp, m.title[0] ? m.title : json_str(t, "title", ""),
+                               m.artist[0] ? m.artist : json_str(t, "artist", ""));
+      online_budget--;
+    }
+    if (gotcv) {
+      cJSON_DeleteItemFromObjectCaseSensitive(t, "cover");
+      cJSON_AddStringToObject(t, "cover", gotcv);
+      covers++;
+      free(gotcv);
+    }
   }
   cJSON_DeleteItemFromObjectCaseSensitive(root, "tracks");
   cJSON_AddItemToObject(root, "tracks", keep);
@@ -814,6 +918,341 @@ static cJSON *M_scan(void) {
   cJSON_AddNumberToObject(out, "pruned", pruned);
   cJSON_AddNumberToObject(out, "pending", pending);
   cJSON_AddNumberToObject(out, "covers", covers);
+  return out;
+}
+
+/* ---------------- 网站抓取 / 服务器浏览 / 下载 ---------------- */
+static int url_audio_ext(const char *u) {
+  if (!u) return 0;
+  char tmp[2048];
+  size_t n = 0;
+  for (const char *p = u; *p && n + 1 < sizeof(tmp); p++) {
+    if (*p == '?' || *p == '#') break;
+    tmp[n++] = *p;
+  }
+  tmp[n] = 0;
+  const char *e = path_ext(tmp);
+  const char *ok[] = { "mp3", "flac", "m4a", "aac", "ogg", "opus", "wav", "ape", "wma", "aiff", "aif", "dsf", "dff", "alac", NULL };
+  for (int i = 0; ok[i]; i++) if (!_stricmp(e, ok[i])) return 1;
+  return 0;
+}
+static int url_netdisk(const char *u) {
+  const char *hosts[] = { "pan.baidu.com", "pan.quark.cn", "aliyundrive.com", "alipan.com",
+    "pan.xunlei.com", "115.com", "lanzou", "cloud.189.cn", "weiyun.com", "mega.nz",
+    "drive.google.com", "1drv.ms", "dropbox.com", NULL };
+  for (int i = 0; hosts[i]; i++) if (u && strstr(u, hosts[i])) return 1;
+  return 0;
+}
+static char *url_resolve(const char *base, const char *href) {
+  if (!href || !*href) return NULL;
+  if (!_strnicmp(href, "http://", 7) || !_strnicmp(href, "https://", 8)) return xstrdup(href);
+  if (!strncmp(href, "//", 2)) {
+    const char *sc = strstr(base, "://");
+    if (!sc) return NULL;
+    char *r = (char *)xmalloc(strlen(base) + strlen(href) + 4);
+    size_t n = (size_t)(sc - base) + 1;
+    memcpy(r, base, n); r[n] = 0;
+    strcat(r, href);
+    return r;
+  }
+  const char *sc = strstr(base, "://");
+  if (!sc) return xstrdup(href);
+  const char *host = sc + 3;
+  const char *slash = strchr(host, '/');
+  if (href[0] == '/') {
+    size_t n = slash ? (size_t)(slash - base) : strlen(base);
+    char *r = (char *)xmalloc(n + strlen(href) + 2);
+    memcpy(r, base, n); r[n] = 0;
+    strcat(r, href);
+    return r;
+  }
+  char *b = xstrdup(base);
+  char *q = strpbrk(b, "?#");
+  if (q) *q = 0;
+  char *last = strrchr(b, '/');
+  if (!last || (slash && last < slash)) {
+    free(b); b = (char *)xmalloc(strlen(base) + 2);
+    snprintf(b, strlen(base) + 2, "%s/", base);
+    last = b + strlen(b) - 1;
+  }
+  last[1] = 0;
+  while (!strncmp(href, "./", 2)) href += 2;
+  char *r = (char *)xmalloc(strlen(b) + strlen(href) + 2);
+  sprintf(r, "%s%s", b, href);
+  free(b);
+  return r;
+}
+static int audio_has(cJSON *arr, const char *url) {
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, arr) if (!strcmp(json_str(it, "url", ""), url)) return 1;
+  return 0;
+}
+static void add_audio_link(cJSON *audio, cJSON *netdisk, const char *base, const char *href) {
+  if (!href || !*href) return;
+  char *u = url_resolve(base, href);
+  if (!u) return;
+  if (url_audio_ext(u)) {
+    if (!audio_has(audio, u)) {
+      char *clean = xstrdup(u);
+      char *q = strpbrk(clean, "?#"); if (q) *q = 0;
+      const char *bn = path_basename(clean);
+      char *dn = url_decode(bn && *bn ? bn : "track");
+      cJSON *o = cJSON_CreateObject();
+      cJSON_AddStringToObject(o, "url", u);
+      cJSON_AddStringToObject(o, "name", dn && *dn ? dn : "track");
+      cJSON_AddItemToArray(audio, o);
+      free(dn); free(clean);
+    }
+  } else if (url_netdisk(u)) {
+    cJSON *it = NULL;
+    int dup = 0;
+    cJSON_ArrayForEach(it, netdisk) if (!strcmp(json_str(it, "url", ""), u)) { dup = 1; break; }
+    if (!dup) {
+      cJSON *o = cJSON_CreateObject();
+      cJSON_AddStringToObject(o, "url", u);
+      cJSON_AddItemToArray(netdisk, o);
+    }
+  }
+  free(u);
+}
+static void collect_links(const char *base, const char *body, cJSON *audio, cJSON *netdisk) {
+  if (!body) return;
+  const char *keys[] = { "href=", "src=", "data-src=", "data-url=", "file:", NULL };
+  for (int k = 0; keys[k]; k++) {
+    const char *p = body;
+    while ((p = strstr(p, keys[k])) != NULL) {
+      p += strlen(keys[k]);
+      while (*p == ' ' || *p == '\t' || *p == '"' || *p == '\'') p++;
+      const char *e = p;
+      while (*e && *e != '"' && *e != '\'' && *e != ' ' && *e != '<' && *e != '>' && *e != '\n' && *e != '\r') e++;
+      if (e > p) {
+        char *v = xstrndup(p, (size_t)(e - p));
+        /* HTML 实体 */
+        for (char *x = v; *x; x++) if (!strncmp(x, "&amp;", 5)) { *x = '&'; memmove(x + 1, x + 5, strlen(x + 5) + 1); }
+        add_audio_link(audio, netdisk, base, v);
+        free(v);
+      }
+      p = e;
+    }
+  }
+  /* SPA / JS 里的裸 URL */
+  const char *p = body;
+  while ((p = strstr(p, "http")) != NULL) {
+    if (_strnicmp(p, "http://", 7) && _strnicmp(p, "https://", 8)) { p += 4; continue; }
+    const char *e = p;
+    while (*e && *e != '"' && *e != '\'' && *e != ' ' && *e != '<' && *e != '>' && *e != ')' && *e != ']' && *e != '\n' && *e != '\r') e++;
+    if (e > p) {
+      char *v = xstrndup(p, (size_t)(e - p));
+      add_audio_link(audio, netdisk, base, v);
+      free(v);
+    }
+    p = e;
+  }
+}
+static int crawl_one(const char *url, cJSON *audio, cJSON *netdisk, char **err) {
+  int status = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: text/html,application/json,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0\r\n",
+      NULL, 0, 15000, &status, NULL);
+  if (!body) { if (err) *err = xstrdup("打不开"); return 0; }
+  int reached = status == 200;
+  if (reached) collect_links(url, body, audio, netdisk);
+  g_host->dealloc(body);
+  if (!reached && err) { char b[64]; snprintf(b, sizeof(b), "HTTP %d", status); *err = xstrdup(b); }
+  return reached;
+}
+static void sanitize_filename(char *s) {
+  for (char *p = s; *p; p++) if (strchr("<>:\"/\\|?*", *p) || (unsigned char)*p < 32) *p = '_';
+  if (!*s) strcpy(s, "track");
+}
+static char *download_dir(void) {
+  cJSON *src = get_defaults("source");
+  char *d = *json_str(src, "dir", "") ? xstrdup(json_str(src, "dir", "")) : NULL;
+  cJSON_Delete(src);
+  if (d) return d;
+  cJSON *root = ms_get_root();
+  cJSON *roots = cJSON_GetObjectItemCaseSensitive(root, "roots");
+  cJSON *r0 = cJSON_GetArrayItem(roots, 0);
+  if (cJSON_IsString(r0) && r0->valuestring[0]) d = xstrdup(r0->valuestring);
+  cJSON_Delete(root);
+  if (d) return d;
+  char *music = special_folder(CSIDL_MYMUSIC);
+  d = path_join(music && *music ? music : mod_data_dir(), "拾光集下载");
+  free(music);
+  return d;
+}
+static void add_downloaded_track(const char *path) {
+  cJSON *root = ms_get_root();
+  cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, tracks) if (!strcmp(json_str(it, "path", ""), path)) { cJSON_Delete(root); return; }
+  TrackMeta m; sniff_meta(path, &m);
+  char *lrc = match_lrc(path, m.title, m.artist);
+  cJSON *o = track_json(path, &m, lrc ? lrc : "");
+  free(lrc);
+  if (!m.cover[0]) {
+    char *fc = folder_cover_for(path);
+    if (!fc) fc = online_cover_for(path, m.title[0] ? m.title : path_basename(path),
+                                   m.artist[0] ? m.artist : "");
+    if (fc) { cJSON_DeleteItemFromObjectCaseSensitive(o, "cover"); cJSON_AddStringToObject(o, "cover", fc); free(fc); }
+  }
+  cJSON_AddItemToArray(tracks, o);
+  ms_save(root);
+  cJSON_Delete(root);
+  ms_emit("download");
+}
+static int download_one(const char *url, const char *name, const char *dir) {
+  int status = 0;
+  size_t len = 0;
+  unsigned char *body = (unsigned char *)g_host->http_request("GET", url,
+      "Accept: audio/*,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0\r\n", NULL, 0, 180000, &status, &len);
+  if (!body) return 0;
+  int ok = status == 200 && len > 1024;
+  if (ok) {
+    unsigned char c0 = body[0];
+    if (c0 == '<' || (len > 4 && !memcmp(body, "<?xml", 5)) || (len > 15 && !memcmp(body, "<!DOCTYPE", 9))) ok = 0;
+  }
+  if (!ok) { g_host->dealloc(body); return 0; }
+  char fn[MAX_PATH];
+  snprintf(fn, sizeof(fn), "%s", name && *name ? name : path_basename(url));
+  sanitize_filename(fn);
+  const char *ext = path_ext(fn);
+  if (!*ext) {
+    const char *ue = path_ext(url);
+    if (*ue) { size_t n = strlen(fn); snprintf(fn + n, sizeof(fn) - n, ".%s", ue); }
+    else strncat(fn, ".mp3", sizeof(fn) - strlen(fn) - 1);
+  }
+  char *dest = path_join(dir, fn);
+  if (path_exists(dest)) {
+    /* 防重名：加序号 */
+    for (int i = 2; i < 100; i++) {
+      char base[MAX_PATH]; snprintf(base, sizeof(base), "%s", fn);
+      char *dot = strrchr(base, '.');
+      char cand[MAX_PATH];
+      if (dot) { *dot = 0; snprintf(cand, sizeof(cand), "%s (%d).%s", base, i, dot + 1); }
+      else snprintf(cand, sizeof(cand), "%s (%d)", base, i);
+      char *nd = path_join(dir, cand);
+      if (!path_exists(nd)) { free(dest); dest = nd; break; }
+      free(nd);
+    }
+  }
+  int wrote = file_write_all(dest, body, len);
+  g_host->dealloc(body);
+  if (!wrote) { free(dest); return 0; }
+  add_downloaded_track(dest);
+  free(dest);
+  return 1;
+}
+
+/* ---------------- 公开歌单（网易云分享链接，不需要登录） ---------------- */
+static int text_same(const char *a, const char *b) {
+  if (!a || !b) return 0;
+  char *x = str_lower(a), *y = str_lower(b);
+  for (char *p = x; *p; p++) if (*p == ' ' || *p == '\t') memmove(p, p + 1, strlen(p));
+  for (char *p = y; *p; p++) if (*p == ' ' || *p == '\t') memmove(p, p + 1, strlen(p));
+  int same = !strcmp(x, y);
+  free(x); free(y);
+  return same;
+}
+static cJSON *local_track_match(const char *title, const char *artist, const char **how) {
+  cJSON *root = ms_get_root();
+  cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+  cJSON *best = NULL;
+  cJSON *t = NULL;
+  cJSON_ArrayForEach(t, tracks) {
+    const char *lt = json_str(t, "title", "");
+    const char *la = json_str(t, "artist", "");
+    if (text_same(title, lt)) {
+      if (!*artist || text_same(artist, la) || strstr(la, artist) || strstr(artist, la)) {
+        best = cJSON_Duplicate(t, 1);
+        if (how) *how = "标题 + 歌手";
+        break;
+      }
+      if (!best) { best = cJSON_Duplicate(t, 1); if (how) *how = "标题"; }
+    }
+  }
+  cJSON_Delete(root);
+  return best;
+}
+static char *playlist_id_of(const char *link) {
+  const char *p = link ? strstr(link, "id=") : NULL;
+  if (p) p += 3;
+  else if (link) p = strstr(link, "playlist/");
+  if (p && !strncmp(p, "playlist/", 9)) p += 9;
+  if (!p) return NULL;
+  int n = 0;
+  while (p[n] >= '0' && p[n] <= '9') n++;
+  return n ? xstrndup(p, (size_t)n) : NULL;
+}
+static cJSON *online_playlist_preview(const char *link) {
+  char *pid = playlist_id_of(link);
+  if (!pid) return NULL;
+  size_t cap = strlen(pid) + 160;
+  char *url = (char *)xmalloc(cap);
+  snprintf(url, cap, "https://music.163.com/api/v6/playlist/detail?id=%s&n=1000", pid);
+  int status = 0;
+  char *body = g_host->http_request("GET", url,
+      "Accept: application/json\r\nReferer: https://music.163.com/\r\nUser-Agent: Mozilla/5.0\r\n",
+      NULL, 0, 8000, &status, NULL);
+  free(url); free(pid);
+  if (!body || status != 200) { if (body) g_host->dealloc(body); return NULL; }
+  cJSON *j = cJSON_Parse(body);
+  g_host->dealloc(body);
+  cJSON *pl = j ? cJSON_GetObjectItemCaseSensitive(j, "playlist") : NULL;
+  if (!cJSON_IsObject(pl)) { cJSON_Delete(j); return NULL; }
+  cJSON *out = cJSON_CreateObject();
+  cJSON_AddStringToObject(out, "name", json_str(pl, "name", "在线歌单"));
+  cJSON_AddStringToObject(out, "cover", json_str(pl, "coverImgUrl", ""));
+  cJSON *cr = cJSON_GetObjectItemCaseSensitive(pl, "creator");
+  cJSON_AddStringToObject(out, "creator", cr ? json_str(cr, "nickname", "") : "");
+  cJSON *src = cJSON_CreateObject();
+  cJSON_AddStringToObject(src, "link", link);
+  cJSON_AddStringToObject(src, "platform", "netease");
+  cJSON_AddStringToObject(src, "platformName", "网易云音乐");
+  cJSON_AddItemToObject(out, "source", src);
+  cJSON *tracks = cJSON_GetObjectItemCaseSensitive(pl, "tracks");
+  int total = cJSON_GetArraySize(tracks);
+  cJSON_AddNumberToObject(out, "total", total);
+  cJSON *items = cJSON_CreateArray();
+  int matched = 0;
+  cJSON *t = NULL;
+  cJSON_ArrayForEach(t, tracks) {
+    const char *title = json_str(t, "name", "");
+    if (!*title) continue;
+    cJSON *ars = cJSON_GetObjectItemCaseSensitive(t, "ar");
+    char artist[512] = "";
+    cJSON *a = NULL;
+    cJSON_ArrayForEach(a, ars) {
+      const char *an = json_str(a, "name", "");
+      if (*an) {
+        if (*artist) strncat(artist, "/", sizeof(artist) - strlen(artist) - 1);
+        strncat(artist, an, sizeof(artist) - strlen(artist) - 1);
+      }
+    }
+    cJSON *al = cJSON_GetObjectItemCaseSensitive(t, "al");
+    const char *album = al ? json_str(al, "name", "") : "";
+    int dur = (int)(json_num(t, "dt", 0) / 1000);
+    const char *how = "";
+    cJSON *local = local_track_match(title, artist, &how);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "title", title);
+    cJSON_AddStringToObject(o, "artist", artist);
+    cJSON_AddStringToObject(o, "album", album);
+    json_set_int(o, "duration", dur);
+    json_set_bool(o, "matched", local ? 1 : 0);
+    if (local) {
+      cJSON_AddStringToObject(o, "trackId", json_str(local, "id", ""));
+      cJSON_AddStringToObject(o, "matchHow", how);
+      matched++;
+      cJSON_Delete(local);
+    }
+    cJSON_AddItemToArray(items, o);
+  }
+  cJSON_Delete(j);
+  cJSON_AddItemToObject(out, "items", items);
+  cJSON_AddNumberToObject(out, "matched", matched);
+  cJSON_AddNumberToObject(out, "missing", total - matched);
+  json_set_bool(out, "partial", total >= 1000);
   return out;
 }
 
@@ -1646,14 +2085,280 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
     ms_save(root);
     cJSON_Delete(root);
     res = cJSON_CreateBool(1);
-  } else if (!strcmp(channel, "music:onlinePlaylist") || !strcmp(channel, "music:myPlaylists") ||
-             !strcmp(channel, "music:importOnlinePlaylist") || !strcmp(channel, "music:resyncOnlinePlaylist")) {
-    rc = -1; *out_error = mod_ret_error("C 版还没有接入在线歌单（需要平台登录）");
-  } else if (!strcmp(channel, "music:testSource") || !strcmp(channel, "music:testCrawlSites") ||
-             !strcmp(channel, "music:crawl") || !strcmp(channel, "music:crawlSites") ||
-             !strcmp(channel, "music:browseServer") || !strcmp(channel, "music:downloadAudio") ||
-             !strcmp(channel, "music:fillMissing")) {
-    rc = -1; *out_error = mod_ret_error("C 版还没有接入在线下载 / 抓取（后端网络接口保留在文档里）");
+  } else if (!strcmp(channel, "music:onlinePlaylist")) {
+    const char *link = mod_arg_str(args, 0, "");
+    cJSON *pv = online_playlist_preview(link);
+    if (!pv) { rc = -1; *out_error = mod_ret_error("解析失败：目前支持网易云公开歌单链接（music.163.com/playlist?id=…）"); goto done; }
+    res = pv;
+  } else if (!strcmp(channel, "music:importOnlinePlaylist")) {
+    const char *link = mod_arg_str(args, 0, "");
+    cJSON *opts = mod_arg_obj(args, 1);
+    cJSON *pv = opts ? cJSON_GetObjectItemCaseSensitive(opts, "preview") : NULL;
+    cJSON *owned = NULL;
+    if (!cJSON_IsObject(pv)) { owned = online_playlist_preview(link); pv = owned; }
+    if (!cJSON_IsObject(pv)) { cJSON_Delete(owned); rc = -1; *out_error = mod_ret_error("解析失败：只支持网易云公开歌单"); goto done; }
+    const char *nm = opts ? json_str(opts, "name", "") : "";
+    if (!*nm) nm = json_str(pv, "name", "在线歌单");
+    cJSON *tracks = cJSON_CreateArray();
+    int matched = 0, missing = 0;
+    cJSON *items = cJSON_GetObjectItemCaseSensitive(pv, "items");
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, items) {
+      const char *tid = json_str(it, "trackId", "");
+      if (*tid) { cJSON_AddItemToArray(tracks, cJSON_CreateString(tid)); matched++; }
+      else missing++;
+    }
+    cJSON *popts = cJSON_CreateObject();
+    cJSON_AddItemToObject(popts, "tracks", tracks);
+    cJSON *pl = M_add_playlist(nm, popts);
+    cJSON_Delete(popts);
+    const char *pid = pl ? json_str(pl, "id", "") : "";
+    if (*pid) {
+      cJSON *root = ms_get_root();
+      cJSON *pls = cJSON_GetObjectItemCaseSensitive(root, "playlists");
+      cJSON *real = pl_find(pls, pid);
+      if (real) {
+        json_set_str(real, "source", link);
+        json_set_str(real, "platform", "netease");
+        json_set_str(real, "cover", json_str(pv, "cover", ""));
+        m_set(real, "onlineItems", cJSON_Duplicate(items, 1));
+        ms_save(root);
+      }
+      cJSON_Delete(root);
+    }
+    res = cJSON_CreateObject();
+    cJSON *plout = cJSON_CreateObject();
+    cJSON_AddStringToObject(plout, "id", pid);
+    cJSON_AddStringToObject(plout, "name", pl ? json_str(pl, "name", nm) : nm);
+    cJSON_AddItemToObject(res, "playlist", plout);
+    cJSON_AddNumberToObject(res, "matched", matched);
+    cJSON_AddNumberToObject(res, "missing", missing);
+    cJSON_Delete(pl);
+    cJSON_Delete(owned);
+  } else if (!strcmp(channel, "music:resyncOnlinePlaylist")) {
+    const char *pid = mod_arg_str(args, 0, "");
+    cJSON *root = ms_get_root();
+    cJSON *pls = cJSON_GetObjectItemCaseSensitive(root, "playlists");
+    cJSON *pl = pl_find(pls, pid);
+    const char *link = pl ? json_str(pl, "source", "") : "";
+    cJSON_Delete(root);
+    if (!*link) { rc = -1; *out_error = mod_ret_error("这个歌单没有在线来源"); goto done; }
+    cJSON *pv = online_playlist_preview(link);
+    if (!pv) { rc = -1; *out_error = mod_ret_error("重新解析在线歌单失败"); goto done; }
+    cJSON *tracks = cJSON_CreateArray();
+    int matched = 0, missing = 0;
+    cJSON *items = cJSON_GetObjectItemCaseSensitive(pv, "items");
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, items) {
+      const char *tid = json_str(it, "trackId", "");
+      if (*tid) { cJSON_AddItemToArray(tracks, cJSON_CreateString(tid)); matched++; }
+      else missing++;
+    }
+    root = ms_get_root();
+    pls = cJSON_GetObjectItemCaseSensitive(root, "playlists");
+    pl = pl_find(pls, pid);
+    if (pl) {
+      m_set(pl, "tracks", tracks);
+      m_set(pl, "onlineItems", cJSON_Duplicate(items, 1));
+      json_set_int(pl, "updatedAt", now_ms());
+      ms_save(root);
+    } else cJSON_Delete(tracks);
+    cJSON_Delete(root);
+    cJSON_Delete(pv);
+    res = cJSON_CreateObject();
+    cJSON_AddNumberToObject(res, "matched", matched);
+    cJSON_AddNumberToObject(res, "missing", missing);
+  } else if (!strcmp(channel, "music:myPlaylists")) {
+    rc = -1; *out_error = mod_ret_error("读取「我的歌单」需要登录平台（当前只支持公开歌单链接）");
+  } else if (!strcmp(channel, "music:testCrawlSites")) {
+    cJSON *urls = mod_arg_at(args, 0);
+    cJSON *details = cJSON_CreateArray();
+    int n = cJSON_IsArray(urls) ? cJSON_GetArraySize(urls) : 0;
+    for (int i = 0; i < n; i++) {
+      cJSON *u = cJSON_GetArrayItem(urls, i);
+      if (!cJSON_IsString(u)) continue;
+      cJSON *audio = cJSON_CreateArray(), *netdisk = cJSON_CreateArray();
+      char *err = NULL;
+      int reached = crawl_one(u->valuestring, audio, netdisk, &err);
+      cJSON *d = cJSON_CreateObject();
+      cJSON_AddStringToObject(d, "url", u->valuestring);
+      json_set_bool(d, "reached", reached);
+      cJSON_AddNumberToObject(d, "audio", cJSON_GetArraySize(audio));
+      cJSON_AddNumberToObject(d, "netdisk", cJSON_GetArraySize(netdisk));
+      json_set_bool(d, "ok", reached && cJSON_GetArraySize(audio) > 0);
+      if (err) cJSON_AddStringToObject(d, "error", err);
+      free(err);
+      cJSON_AddItemToArray(details, d);
+      cJSON_Delete(audio); cJSON_Delete(netdisk);
+    }
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "details", details);
+  } else if (!strcmp(channel, "music:crawl") || !strcmp(channel, "music:crawlSites")) {
+    cJSON *urls = mod_arg_at(args, 0);
+    if (cJSON_IsString(urls)) {
+      cJSON *arr = cJSON_CreateArray();
+      cJSON_AddItemToArray(arr, cJSON_CreateString(urls->valuestring));
+      urls = arr;
+    }
+    cJSON *allAudio = cJSON_CreateArray(), *allNetdisk = cJSON_CreateArray();
+    cJSON *sources = cJSON_CreateArray();
+    int n = cJSON_IsArray(urls) ? cJSON_GetArraySize(urls) : 0;
+    for (int i = 0; i < n; i++) {
+      cJSON *u = cJSON_GetArrayItem(urls, i);
+      if (!cJSON_IsString(u)) continue;
+      cJSON *audio = cJSON_CreateArray(), *netdisk = cJSON_CreateArray();
+      char *err = NULL;
+      int reached = crawl_one(u->valuestring, audio, netdisk, &err);
+      cJSON *src = cJSON_CreateObject();
+      cJSON_AddStringToObject(src, "url", u->valuestring);
+      json_set_bool(src, "reached", reached);
+      json_set_bool(src, "ok", reached && cJSON_GetArraySize(audio) > 0);
+      cJSON_AddNumberToObject(src, "audio", cJSON_GetArraySize(audio));
+      cJSON_AddNumberToObject(src, "netdisk", cJSON_GetArraySize(netdisk));
+      if (err) cJSON_AddStringToObject(src, "error", err);
+      free(err);
+      cJSON_AddItemToArray(sources, src);
+      cJSON *a = NULL;
+      cJSON_ArrayForEach(a, audio) {
+        const char *au = json_str(a, "url", "");
+        if (!*au || audio_has(allAudio, au)) continue;
+        cJSON_AddItemToArray(allAudio, cJSON_Duplicate(a, 1));
+      }
+      cJSON_ArrayForEach(a, netdisk) {
+        const char *au = json_str(a, "url", "");
+        int dup = 0;
+        cJSON *x = NULL;
+        cJSON_ArrayForEach(x, allNetdisk) if (!strcmp(json_str(x, "url", ""), au)) { dup = 1; break; }
+        if (!dup) cJSON_AddItemToArray(allNetdisk, cJSON_Duplicate(a, 1));
+      }
+      cJSON_Delete(audio); cJSON_Delete(netdisk);
+    }
+    res = cJSON_CreateObject();
+    cJSON_AddNumberToObject(res, "total", n);
+    cJSON_AddItemToObject(res, "sources", sources);
+    cJSON_AddItemToObject(res, "audio", allAudio);
+    cJSON_AddItemToObject(res, "netdisk", allNetdisk);
+    cJSON_AddNumberToObject(res, "forwarded", 0);
+  } else if (!strcmp(channel, "music:browseServer")) {
+    cJSON *a = mod_arg_at(args, 0);
+    const char *url = cJSON_IsString(a) ? a->valuestring : (cJSON_IsObject(a) ? json_str(a, "url", "") : "");
+    if (!*url) { rc = -1; *out_error = mod_ret_error("请填写服务器 / 网盘地址"); goto done; }
+    int status = 0;
+    char *body = g_host->http_request("GET", url,
+        "Accept: application/json,text/html,application/xml;q=0.9,*/*;q=0.8\r\nUser-Agent: Mozilla/5.0\r\n",
+        NULL, 0, 15000, &status, NULL);
+    if (!body || status != 200) { if (body) g_host->dealloc(body); rc = -1; *out_error = mod_ret_error("服务器打不开（HTTP %d）", status); goto done; }
+    cJSON *items = cJSON_CreateArray();
+    const char *p = body;
+    while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r') p++;
+    if (*p == '[' || *p == '{') {
+      cJSON *j = cJSON_Parse(body);
+      cJSON *arr = cJSON_IsArray(j) ? j : (j ? cJSON_GetObjectItemCaseSensitive(j, "items") : NULL);
+      if (!arr && j) arr = cJSON_GetObjectItemCaseSensitive(j, "files");
+      if (cJSON_IsArray(arr)) {
+        cJSON *it = NULL;
+        cJSON_ArrayForEach(it, arr) {
+          const char *u = cJSON_IsString(it) ? it->valuestring : json_str(it, "url", "");
+          if (!*u) u = json_str(it, "href", "");
+          if (!*u) continue;
+          char *full = url_resolve(url, u);
+          if (full && url_audio_ext(full)) {
+            cJSON *o = cJSON_CreateObject();
+            cJSON_AddStringToObject(o, "url", full);
+            cJSON_AddStringToObject(o, "name", cJSON_IsObject(it) ? json_str(it, "name", path_basename(full)) : path_basename(full));
+            cJSON_AddItemToArray(items, o);
+          }
+          free(full);
+        }
+      }
+      cJSON_Delete(j);
+    } else {
+      cJSON *audio = cJSON_CreateArray(), *nd = cJSON_CreateArray();
+      collect_links(url, body, audio, nd);
+      /* WebDAV 的 <d:href> 不是 href=，单独扫 */
+      const char *q = body;
+      while ((q = strstr(q, "<d:href>")) != NULL) {
+        q += 8;
+        const char *e = strstr(q, "</d:href>");
+        if (!e) break;
+        char *v = xstrndup(q, (size_t)(e - q));
+        add_audio_link(audio, nd, url, v);
+        free(v); q = e + 9;
+      }
+      cJSON *x = NULL;
+      cJSON_ArrayForEach(x, audio) cJSON_AddItemToArray(items, cJSON_Duplicate(x, 1));
+      cJSON_Delete(audio); cJSON_Delete(nd);
+    }
+    g_host->dealloc(body);
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "items", items);
+  } else if (!strcmp(channel, "music:downloadAudio")) {
+    cJSON *items = mod_arg_at(args, 0);
+    char *dir = NULL;
+    const char *argdir = mod_arg_str(args, 1, "");
+    if (*argdir) dir = xstrdup(argdir);
+    else dir = download_dir();
+    path_mkdirs(dir);
+    int n = 0;
+    int total = cJSON_IsArray(items) ? cJSON_GetArraySize(items) : 0;
+    for (int i = 0; i < total && i < 200; i++) {
+      cJSON *it = cJSON_GetArrayItem(items, i);
+      const char *u = cJSON_IsString(it) ? it->valuestring : json_str(it, "url", "");
+      const char *nm = cJSON_IsObject(it) ? json_str(it, "name", "") : "";
+      if (!*u) continue;
+      if (download_one(u, nm, dir)) n++;
+    }
+    free(dir);
+    res = cJSON_CreateNumber(n);
+  } else if (!strcmp(channel, "music:fillMissing")) {
+    /* 没有可靠的免费直链，不假装下载；把原因返回给界面 */
+    cJSON *failed = cJSON_CreateArray();
+    cJSON *items = mod_arg_at(args, 0);
+    int n = cJSON_IsArray(items) ? cJSON_GetArraySize(items) : 0;
+    for (int i = 0; i < n; i++) {
+      cJSON *it = cJSON_GetArrayItem(items, i);
+      cJSON *o = cJSON_CreateObject();
+      cJSON_AddStringToObject(o, "title", json_str(it, "title", ""));
+      cJSON_AddStringToObject(o, "reason", "没有可用的免费下载直链（需要平台会员/下载源）");
+      cJSON_AddItemToArray(failed, o);
+    }
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "queued", cJSON_CreateArray());
+    cJSON_AddItemToObject(res, "failed", failed);
+  } else if (!strcmp(channel, "music:testSource")) {
+    const char *kw = mod_arg_str(args, 0, "");
+    cJSON *cfg = get_defaults("source");
+    cJSON *urls = cJSON_GetObjectItemCaseSensitive(cfg, "urls");
+    cJSON *details = cJSON_CreateArray();
+    cJSON *u = NULL;
+    cJSON_ArrayForEach(u, urls) {
+      if (!cJSON_IsString(u) || !u->valuestring[0]) continue;
+      char target[2048];
+      const char *raw = u->valuestring;
+      char *enc = url_encode(kw);
+      if (strstr(raw, "{kw}")) {
+        const char *p = strstr(raw, "{kw}");
+        snprintf(target, sizeof(target), "%.*s%s%s", (int)(p - raw), raw, enc ? enc : "", p + 4);
+      } else if (strstr(raw, "%s")) {
+        const char *p = strstr(raw, "%s");
+        snprintf(target, sizeof(target), "%.*s%s%s", (int)(p - raw), raw, enc ? enc : "", p + 2);
+      } else snprintf(target, sizeof(target), "%s", raw);
+      free(enc);
+      cJSON *audio = cJSON_CreateArray(), *nd = cJSON_CreateArray();
+      char *err = NULL;
+      int reached = crawl_one(target, audio, nd, &err);
+      cJSON *d = cJSON_CreateObject();
+      cJSON_AddStringToObject(d, "site", raw);
+      json_set_bool(d, "ok", reached);
+      cJSON_AddNumberToObject(d, "count", cJSON_GetArraySize(audio));
+      if (err) cJSON_AddStringToObject(d, "error", err);
+      free(err);
+      cJSON_AddItemToArray(details, d);
+      cJSON_Delete(audio); cJSON_Delete(nd);
+    }
+    cJSON_Delete(cfg);
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "details", details);
   } else if (!strcmp(channel, "music:shotStats")) {
     rc = -1; *out_error = mod_ret_error("统计海报导出还没接");
   } else {

@@ -1,5 +1,14 @@
 # 更新日志
 
+## 未发布 · 音乐接口与封面
+
+- 封面兜底：内嵌 APIC / FLAC PICTURE / M4A covr 读不到时，先找同目录 `cover/folder/front`，再按歌名+歌手查网易云专辑图；本地 647 首里原本缺的 3 首已补齐
+- 下载的歌走同一条元数据/封面链，下完自动入库
+- 网站抓取：解析 HTML/JS 里的音频直链，支持多站去重；连通测试逐站返回「打不开 / 没抓到音频」
+- 服务器 / NAS：支持目录页、JSON 列表、WebDAV `<d:href>`
+- 下载：音频直链下载到下载目录，写盘后读标签、LRC、封面并加入曲库
+- 公开歌单：网易云 `playlist?id=` 链接可预览、匹配本地、导入；私密歌单/平台登录仍需 Cookie
+
 ## 未发布 · 游戏模块修复
 
 - 封面：从 `uninstallString` / 安装目录反推 Steam AppID；优先本地 `librarycache`，其次 Steam CDN 下载到 `covers\steam_<appid>.jpg`；修复点「联网搜索封面 / 提取图标 / 重新抓取」无效果
