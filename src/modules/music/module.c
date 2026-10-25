@@ -13,6 +13,7 @@ static const char *g_manifest = NULL;
 static const char *g_js = NULL;
 static SgjModule g_mod;
 static cJSON *get_defaults(const char *key);
+static const char *json_txt(const cJSON *o, const char *key, const char *def);
 
 /* ---------------- 小工具 ---------------- */
 static char *M_id(void) {
@@ -984,7 +985,7 @@ static char *url_resolve(const char *base, const char *href) {
 }
 static int audio_has(cJSON *arr, const char *url) {
   cJSON *it = NULL;
-  cJSON_ArrayForEach(it, arr) if (!strcmp(json_str(it, "url", ""), url)) return 1;
+  cJSON_ArrayForEach(it, arr) if (!strcmp(json_txt(it, "url", ""), url)) return 1;
   return 0;
 }
 static void add_audio_link(cJSON *audio, cJSON *netdisk, const char *base, const char *href) {
@@ -1006,7 +1007,7 @@ static void add_audio_link(cJSON *audio, cJSON *netdisk, const char *base, const
   } else if (url_netdisk(u)) {
     cJSON *it = NULL;
     int dup = 0;
-    cJSON_ArrayForEach(it, netdisk) if (!strcmp(json_str(it, "url", ""), u)) { dup = 1; break; }
+    cJSON_ArrayForEach(it, netdisk) if (!strcmp(json_txt(it, "url", ""), u)) { dup = 1; break; }
     if (!dup) {
       cJSON *o = cJSON_CreateObject();
       cJSON_AddStringToObject(o, "url", u);
@@ -1101,7 +1102,9 @@ static void add_downloaded_track(const char *path) {
   cJSON_Delete(root);
   ms_emit("download");
 }
-static int download_one(const char *url, const char *name, const char *dir) {
+/* out_path 非空时回填「实际落盘路径」（可能加了 " (2)" 这类防重名后缀） */
+static int download_one_ex(const char *url, const char *name, const char *dir, char **out_path) {
+  if (out_path) *out_path = NULL;
   int status = 0;
   size_t len = 0;
   unsigned char *body = (unsigned char *)g_host->http_request("GET", url,
@@ -1140,11 +1143,14 @@ static int download_one(const char *url, const char *name, const char *dir) {
   g_host->dealloc(body);
   if (!wrote) { free(dest); return 0; }
   add_downloaded_track(dest);
-  free(dest);
+  if (out_path) *out_path = dest;   /* 所有权转给调用方 */
+  else free(dest);
   return 1;
 }
+static int download_one(const char *url, const char *name, const char *dir) {
+  return download_one_ex(url, name, dir, NULL);
+}
 
-/* ---------------- 公开歌单（网易云分享链接，不需要登录） ---------------- */
 static int text_same(const char *a, const char *b) {
   if (!a || !b) return 0;
   char *x = str_lower(a), *y = str_lower(b);
@@ -1154,6 +1160,260 @@ static int text_same(const char *a, const char *b) {
   free(x); free(y);
   return same;
 }
+/* 按歌名+歌手在音乐库里找已有的曲目（每日推荐去重用） */
+static int library_has(const char *title, const char *artist) {
+  if (!title || !*title) return 0;
+  cJSON *root = ms_get_root();
+  cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+  int hit = 0;
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, tracks) {
+    if (text_same(json_str(it, "title", ""), title)) {
+      if (!artist || !*artist || text_same(json_str(it, "artist", ""), artist)) { hit = 1; break; }
+    }
+  }
+  cJSON_Delete(root);
+  return hit;
+}
+
+/* ============================================================
+ *  多站合一音源（flac.music.hi.cn 同款协议）
+ * ------------------------------------------------------------
+ *  站点前端是 SPA，页面源码里没有任何音频直链 —— 老的「抓页面 href」
+ *  那套在这里必然 0 命中（界面报「站点没搜到这首歌」就是这个原因）。
+ *  真实协议是三个 POST：
+ *    POST /ajax.php?act=search   platform,keyword,page,size
+ *         → data.list[] 每项带 minfo[]（level/bitrate/format/size）、time、sign
+ *    POST /ajax.php?act=getUrl   platform,songid,format,bitrate,time,sign
+ *         → data.url 临时直链（带时效，约 1 小时，所以不缓存落盘）
+ *    POST /ajax.php?act=getLyric platform,songid,time,sign  → data = lrc 文本
+ *  🔴 sign 是搜索返回的，必须原样回传；自己拼不出来。
+ *  🔴 直链在 other-*.kuwo.cn 这类第三方 CDN 上，下载要带 UA，否则 403。
+ * ============================================================ */
+#define HICN_HOST_DEFAULT "flac.music.hi.cn"
+#define HICN_UA "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+
+/* 站点返回的字段有时是数字、有时是字符串（time / bitrate 都见过两种），
+   直接 json_str 读数字会拿到默认值 0 → getUrl 报「请求已过期」，所以统一走这个。
+   ⚠️ 数字分支写进一块静态缓冲：本模块调用都是单线程串行，够用且不泄漏。 */
+static const char *json_txt(const cJSON *o, const char *key, const char *def) {
+  static char numbuf[4][64];
+  static int slot = 0;
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
+  if (!v) return def;
+  if (cJSON_IsString(v) && v->valuestring) return v->valuestring;
+  if (cJSON_IsNumber(v)) {
+    char *b = numbuf[slot]; slot = (slot + 1) & 3;
+    if (v->valuedouble == (double)v->valueint) snprintf(b, 64, "%d", v->valueint);
+    else snprintf(b, 64, "%.0f", v->valuedouble);
+    return b;
+  }
+  return def;
+}
+
+static char *hicn_host(void) {
+  cJSON *s = get_defaults("source");
+  /* 优先读专用的 host；没填就退到「搜索地址」里的第一条（用户在设置页填的）
+     —— 这样不新增界面字段也能用，填 flac.music.hi.cn 即可。 */
+  const char *h = json_str(s, "host", "");
+  char *cand = NULL;
+  if (!h || !*h) {
+    cJSON *sites = cJSON_GetObjectItemCaseSensitive(s, "sites");
+    cJSON *first = cJSON_IsArray(sites) ? cJSON_GetArrayItem(sites, 0) : NULL;
+    if (cJSON_IsString(first) && first->valuestring[0]) cand = xstrdup(first->valuestring);
+  }
+  char *r = cand ? cand : xstrdup(h && *h ? h : HICN_HOST_DEFAULT);
+  cJSON_Delete(s);
+  /* 只留主机，容忍用户贴成 https://xxx/ 或带路径 */
+  char *p = strstr(r, "://"); if (p) memmove(r, p + 3, strlen(p + 3) + 1);
+  for (char *q = r; *q; q++) {
+    if (*q == '/' || *q == ' ' || *q == '\r' || *q == '\n' || *q == '?') { *q = 0; break; }
+  }
+  /* 只认域名形态；填成带 {q} 的搜索结果页模板就当没填 */
+  if (!*r || strchr(r, '{') || strchr(r, '%')) { free(r); r = xstrdup(HICN_HOST_DEFAULT); }
+  return r;
+}
+/* POST ajax.php?act=xxx，body 是已编码好的 k=v&k=v */
+static cJSON *hicn_post(const char *act, const char *body, char **err) {
+  char *host = hicn_host();
+  char url[512];
+  snprintf(url, sizeof(url), "https://%s/ajax.php?act=%s", host, act);
+  char headers[1024];
+  snprintf(headers, sizeof(headers),
+      "Content-Type: application/x-www-form-urlencoded;charset=UTF-8\r\n"
+      "Accept: application/json, text/plain, */*\r\n"
+      "Origin: https://%s\r\nReferer: https://%s/\r\n"
+      "X-Requested-With: XMLHttpRequest\r\nUser-Agent: %s\r\n",
+      host, host, HICN_UA);
+  int status = 0;
+  size_t len = 0;
+  char *resp = g_host->http_request("POST", url, headers, body, body ? strlen(body) : 0, 20000, &status, &len);
+  free(host);
+  if (!resp) { if (err) *err = xstrdup("音源站打不开（网络不通或被墙）"); return NULL; }
+  if (status != 200) {
+    if (err) { char b[80]; snprintf(b, sizeof(b), "音源站返回 HTTP %d", status); *err = xstrdup(b); }
+    g_host->dealloc(resp);
+    return NULL;
+  }
+  cJSON *j = cJSON_Parse(resp);
+  g_host->dealloc(resp);
+  if (!cJSON_IsObject(j)) {
+    if (j) cJSON_Delete(j);
+    if (err) *err = xstrdup("音源站返回的不是 JSON（可能被反爬拦截）");
+    return NULL;
+  }
+  cJSON *code = cJSON_GetObjectItemCaseSensitive(j, "code");
+  if (!cJSON_IsNumber(code) || code->valueint != 0) {
+    if (err) *err = xstrdup(json_str(j, "msg", "音源站返回异常"));
+    cJSON_Delete(j);
+    return NULL;
+  }
+  return j;
+}
+/* 在 minfo[] 里挑一档：want 是音质偏好（highest/lossless/high/standard）
+ * 🔴 bitrate 用 json_num 直接取数字 —— 别 atoi(json_txt(...))：json_txt 的数字分支
+ *    用同一块静态缓冲，循环里连续取会把上一次的值覆盖掉。 */
+static int fmt_lossless(const char *fmt) {
+  return fmt && (!_stricmp(fmt, "flac") || !_stricmp(fmt, "ape") || !_stricmp(fmt, "wav") ||
+                 !_stricmp(fmt, "alac") || !_stricmp(fmt, "aiff") || !_stricmp(fmt, "dsf"));
+}
+/* bitrate 可能是数字也可能是字符串 "2000" —— 两种都取到数 */
+static int json_int_of(const cJSON *o, const char *key) {
+  const cJSON *v = cJSON_GetObjectItemCaseSensitive(o, key);
+  if (cJSON_IsNumber(v)) return v->valueint;
+  if (cJSON_IsString(v) && v->valuestring) return atoi(v->valuestring);
+  return 0;
+}
+static cJSON *hicn_pick_minfo(cJSON *song, const char *want) {
+  cJSON *minfo = cJSON_GetObjectItemCaseSensitive(song, "minfo");
+  if (!cJSON_IsArray(minfo)) return NULL;
+  int want_lossless = 1;
+  if (want && (!strcmp(want, "high") || !strcmp(want, "standard") || !strcmp(want, "mp3"))) want_lossless = 0;
+  cJSON *best = NULL, *x = NULL;
+  int best_br = -1;
+  cJSON_ArrayForEach(x, minfo) {
+    int lossless = fmt_lossless(json_txt(x, "format", ""));
+    if (want_lossless ? !lossless : lossless) continue;
+    int br = json_int_of(x, "bitrate");
+    if (br > best_br) { best = x; best_br = br; }
+  }
+  /* 想要无损但没有无损档 → 退回最好的有损档（宁可有声，不要报错） */
+  if (!best) {
+    best_br = -1;
+    cJSON_ArrayForEach(x, minfo) {
+      int br = json_int_of(x, "bitrate");
+      if (br > best_br) { best = x; best_br = br; }
+    }
+  }
+  return best;
+}
+/* 搜一首：out 里塞 song 对象（id/name/artist/minfo/time/sign），返回 1 命中 */
+static int hicn_search(const char *keyword, const char *platform, cJSON **out_song, char **err) {
+  if (!keyword || !*keyword) return 0;
+  char *enc = url_encode(keyword);
+  char *body = (char *)xmalloc(strlen(keyword) * 3 + 128);
+  sprintf(body, "platform=%s&keyword=%s&page=1&size=10", platform && *platform ? platform : "kuwo", enc ? enc : "");
+  free(enc);
+  cJSON *j = hicn_post("search", body, err);
+  free(body);
+  if (!j) return 0;
+  cJSON *data = cJSON_GetObjectItemCaseSensitive(j, "data");
+  cJSON *list = data ? cJSON_GetObjectItemCaseSensitive(data, "list") : NULL;
+  cJSON *first = cJSON_IsArray(list) ? cJSON_GetArrayItem(list, 0) : NULL;
+  if (!cJSON_IsObject(first)) {
+    if (err) *err = xstrdup("站点没搜到这首歌");
+    cJSON_Delete(j);
+    return 0;
+  }
+  if (out_song) *out_song = cJSON_Duplicate(first, 1);
+  cJSON_Delete(j);
+  return 1;
+}
+/* 取直链：成功返回 malloc 字符串 */
+static char *hicn_get_url(cJSON *song, const char *want_quality, const char *name, char **err) {
+  cJSON *mi = hicn_pick_minfo(song, want_quality);
+  if (!mi) { if (err) *err = xstrdup("这首歌没有可用音质"); return NULL; }
+  char *encn = url_encode(name && *name ? name : json_txt(song, "name", ""));
+  free(encn);
+  /* 🔴🔴 这里绝不能直接把多个 json_txt(...) 塞进一个 snprintf 的实参表：
+     json_txt 的数字分支共用静态缓冲，而 C 标准不保证实参求值顺序
+     （MSVC 从右往左）→ 后求值的会把前面的覆盖掉，结果 time=0、
+     getUrl 一律返回「请求已过期」。必须先各自落到独立变量里。 */
+  char sid[64], sfmt[16], sbr[16], stime[32], ssign[128];
+  snprintf(sid, sizeof(sid), "%s", json_txt(song, "id", ""));
+  snprintf(sfmt, sizeof(sfmt), "%s", json_txt(mi, "format", "mp3"));
+  snprintf(sbr, sizeof(sbr), "%s", json_txt(mi, "bitrate", "320"));
+  snprintf(stime, sizeof(stime), "%s", json_txt(song, "time", "0"));
+  snprintf(ssign, sizeof(ssign), "%s", json_txt(song, "sign", ""));
+  char body[1024];
+  snprintf(body, sizeof(body),
+      "platform=%s&songid=%s&format=%s&bitrate=%s&time=%s&sign=%s",
+      "kuwo", sid, sfmt, sbr, stime, ssign);
+  cJSON *j = hicn_post("getUrl", body, err);
+  if (!j) return NULL;
+  cJSON *data = cJSON_GetObjectItemCaseSensitive(j, "data");
+  const char *u = data ? json_str(data, "url", "") : "";
+  char *r = *u ? xstrdup(u) : NULL;
+  if (!r && err) *err = xstrdup("站点没给直链（可能版权限制）");
+  cJSON_Delete(j);
+  return r;
+}
+/* 整首下载：搜索 → 取直链 → 落盘 → 入库。返回 1 成功 */
+static int hicn_download_ex(const char *title, const char *artist, const char *dir,
+                            const char *platform, const char *quality, char **err, char **out_path) {
+  if (out_path) *out_path = NULL;
+  char kw[512];
+  if (artist && *artist) snprintf(kw, sizeof(kw), "%s %s", title ? title : "", artist);
+  else snprintf(kw, sizeof(kw), "%s", title ? title : "");
+  cJSON *song = NULL;
+  if (!hicn_search(kw, platform, &song, err)) {
+    /* 带歌手搜不到时，退一步只用歌名 */
+    if (artist && *artist && !hicn_search(title, platform, &song, err)) return 0;
+    if (!song) return 0;
+  }
+  char *u = hicn_get_url(song, quality, title, err);
+  if (!u) { cJSON_Delete(song); return 0; }
+  cJSON *mi = hicn_pick_minfo(song, quality);
+  char fn[MAX_PATH];
+  snprintf(fn, sizeof(fn), "%s.%s",
+      (artist && *artist) ? title : json_str(song, "name", title ? title : "track"),
+      mi ? json_txt(mi, "format", "mp3") : "mp3");
+  if (artist && *artist) {
+    /* 「歌手 - 歌名」是曲库里最常见的命名，方便后续匹配 */
+    snprintf(fn, sizeof(fn), "%s - %s.%s", artist, title ? title : "", mi ? json_txt(mi, "format", "mp3") : "mp3");
+  }
+  int ok = download_one_ex(u, fn, dir, out_path);
+  if (!ok && err) {
+    /* 区分「直链过期/403」和「写盘失败」——前端提示才有意义 */
+    *err = xstrdup("直链下载失败（链接已过期或 CDN 拒绝）");
+  }
+  free(u);
+  cJSON_Delete(song);
+  return ok;
+}
+static int hicn_download(const char *title, const char *artist, const char *dir,
+                         const char *platform, const char *quality, char **err) {
+  return hicn_download_ex(title, artist, dir, platform, quality, err, NULL);
+}
+/* 取歌词正文（站点有就返回 lrc 文本，没有返回 NULL，不报错） */
+static char *hicn_get_lyric(cJSON *song) {
+  char sid[64], stime[32], ssign[128];
+  snprintf(sid, sizeof(sid), "%s", json_txt(song, "id", ""));
+  snprintf(stime, sizeof(stime), "%s", json_txt(song, "time", "0"));
+  snprintf(ssign, sizeof(ssign), "%s", json_txt(song, "sign", ""));
+  char body[512];
+  snprintf(body, sizeof(body), "platform=kuwo&songid=%s&time=%s&sign=%s", sid, stime, ssign);
+  char *err = NULL;
+  cJSON *j = hicn_post("getLyric", body, &err);
+  free(err);
+  if (!j) return NULL;
+  cJSON *data = cJSON_GetObjectItemCaseSensitive(j, "data");
+  char *r = cJSON_IsString(data) && data->valuestring[0] ? xstrdup(data->valuestring) : NULL;
+  cJSON_Delete(j);
+  return r;
+}
+
+/* ---------------- 公开歌单（网易云分享链接，不需要登录） ---------------- */
 static cJSON *local_track_match(const char *title, const char *artist, const char **how) {
   cJSON *root = ms_get_root();
   cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
@@ -1644,6 +1904,130 @@ static cJSON *daily_config(void) {
   return c;
 }
 
+static cJSON *M_daily_pull(char **out_error) {
+  cJSON *cfg = daily_config();
+  const char *dir = json_str(cfg, "dir", "");
+  const char *quality = json_str(cfg, "quality", "highest");
+  int limit = (int)json_num(cfg, "limit", 30);
+  if (limit <= 0) limit = 30;
+  if (limit > 100) limit = 100;
+  if (!*dir) { cJSON_Delete(cfg); *out_error = mod_ret_error("先在设置里选「每日音乐保存文件夹」"); return NULL; }
+  path_mkdirs(dir);
+
+  /* 这一批要用哪些歌名：优先读上次「网易云歌单兜底」存下的曲目清单；
+     C 版没有登录态，拿不到官方「每日推荐」接口，别假装拿到。 */
+  cJSON *want = cJSON_GetObjectItemCaseSensitive(cfg, "want");
+  if (!cJSON_IsArray(want)) want = cJSON_GetObjectItemCaseSensitive(cfg, "queue");
+  if (!cJSON_IsArray(want)) want = NULL;
+  if (!want) {
+    cJSON_Delete(cfg);
+    *out_error = mod_ret_error("这一批还没有歌单来源：先在上面「导入 / 外部歌单」里选一个歌单，再点立即拉取");
+    return NULL;
+  }
+
+  cJSON *items = cJSON_CreateArray();
+  int total = cJSON_GetArraySize(want);
+  int done = 0;
+  for (int i = 0; i < total && i < limit; i++) {
+    cJSON *w = cJSON_GetArrayItem(want, i);
+    const char *title = cJSON_IsString(w) ? w->valuestring : json_str(w, "title", "");
+    const char *artist = cJSON_IsString(w) ? "" : json_str(w, "artist", "");
+    if (!*title) continue;
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "title", title);
+    cJSON_AddStringToObject(o, "artist", artist);
+    /* 进度推给界面（前端 onDailyProgress 只认 phase=start/index/total/title） */
+    cJSON *pg = cJSON_CreateObject();
+    cJSON_AddStringToObject(pg, "phase", "start");
+    cJSON_AddNumberToObject(pg, "index", i);
+    cJSON_AddNumberToObject(pg, "total", total);
+    cJSON_AddStringToObject(pg, "title", title);
+    char *pj = cJSON_PrintUnformatted(pg);
+    cJSON_Delete(pg);
+    if (pj) { g_host->emit("music:dailyProgress", pj); free(pj); }
+
+    if (library_has(title, artist)) {
+      json_set_bool(o, "ok", 1);
+      cJSON_AddStringToObject(o, "note", "曲库里已经有这首，跳过下载");
+    } else {
+      char *err = NULL;
+      char kw[512];
+      if (*artist) snprintf(kw, sizeof(kw), "%s %s", title, artist);
+      else snprintf(kw, sizeof(kw), "%s", title);
+      cJSON *song = NULL;
+      char *u = NULL;
+      int got = hicn_search(kw, "kuwo", &song, &err);
+      if (!got && *artist) { free(err); err = NULL; got = hicn_search(title, "kuwo", &song, &err); }
+      if (got) u = hicn_get_url(song, quality, title, &err);
+      if (!u && song) { cJSON_Delete(song); song = NULL; }
+      if (!u) {
+        json_set_bool(o, "ok", 0);
+        cJSON_AddStringToObject(o, "error", err ? err : "下载失败");
+        free(err);
+      } else {
+        cJSON *mi = hicn_pick_minfo(song, quality);
+        char fn[MAX_PATH];
+        if (*artist) snprintf(fn, sizeof(fn), "%s - %s.%s", artist, title, mi ? json_txt(mi, "format", "mp3") : "mp3");
+        else snprintf(fn, sizeof(fn), "%s.%s", title, mi ? json_txt(mi, "format", "mp3") : "mp3");
+        /* 直接走 hicn_download_ex：它会自己搜/取直链/落盘，并把**真实路径**
+           （可能带 " (2)" 防重名后缀）回填，界面拿到的 file 才对得上 */
+        char *real = NULL;
+        int ok = download_one_ex(u, fn, dir, &real);
+        if (ok) {
+          json_set_bool(o, "ok", 1);
+          cJSON_AddStringToObject(o, "file", real ? real : fn);
+          free(real);
+          cJSON_AddStringToObject(o, "level", mi ? json_txt(mi, "level", "") : "");
+          cJSON_AddStringToObject(o, "format", mi ? json_txt(mi, "format", "") : "");
+          cJSON_AddStringToObject(o, "cover", json_txt(song, "pic_url", ""));
+          char *lrc = hicn_get_lyric(song);
+          if (lrc && *lrc) {
+            char lp[MAX_PATH];
+            snprintf(lp, sizeof(lp), "%s.lrc", fn);
+            char *ldest = path_join(dir, lp);
+            if (file_write_all(ldest, (const unsigned char *)lrc, strlen(lrc))) json_set_bool(o, "lrc", 1);
+            free(ldest);
+          }
+          free(lrc);
+          done++;
+        } else {
+          json_set_bool(o, "ok", 0);
+          cJSON_AddStringToObject(o, "error", "直链下载失败（链接可能已过期或被 CDN 拒绝）");
+        }
+        free(u);
+        if (song) cJSON_Delete(song);
+      }
+    }
+    cJSON_AddItemToArray(items, o);
+  }
+
+  /* 写回 batch，界面 dailyStatus 就是从这里的 batch 读的 */
+  time_t t = time(NULL);
+  struct tm lt;
+  localtime_s(&lt, &t);
+  char date[16];
+  snprintf(date, sizeof(date), "%04d-%02d-%02d", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+  cJSON *batch = cJSON_CreateObject();
+  cJSON_AddStringToObject(batch, "date", date);
+  cJSON_AddStringToObject(batch, "platform", "kuwo");
+  cJSON_AddStringToObject(batch, "source", "playlist");
+  cJSON_AddStringToObject(batch, "playlist", json_str(cfg, "playlistName", "我的歌单"));
+  cJSON_AddItemToObject(batch, "items", items);
+  cJSON_DeleteItemFromObjectCaseSensitive(cfg, "batch");
+  cJSON_AddItemToObject(cfg, "batch", cJSON_Duplicate(batch, 1));
+  cJSON_DeleteItemFromObjectCaseSensitive(cfg, "lastRun");
+  cJSON_AddStringToObject(cfg, "lastRun", date);
+  set_defaults("daily", cfg);
+  cJSON_Delete(cfg);
+
+  cJSON *res = cJSON_CreateObject();
+  cJSON_AddNumberToObject(res, "total", cJSON_GetArraySize(cJSON_GetObjectItemCaseSensitive(batch, "items")));
+  cJSON_AddNumberToObject(res, "downloaded", done);
+  cJSON_AddItemToObject(res, "batch", batch);
+  ms_emit("daily");
+  return res;
+}
+
 /* ---------------- 分发 ---------------- */
 static int music_invoke(const char *channel, const char *args_json, char **out_json, char **out_error) {
   cJSON *args = mod_parse_args(args_json);
@@ -2051,7 +2435,28 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
     cJSON_AddItemToObject(res, "batch", batch ? cJSON_Duplicate(batch, 1) : cJSON_CreateNull());
     cJSON_Delete(c);
   } else if (!strcmp(channel, "music:dailyPull")) {
-    rc = -1; *out_error = mod_ret_error("C 版还没有接入「每日推荐」的在线下载（需要平台登录 + 下载源）");
+    res = M_daily_pull(out_error);
+    if (!res) rc = -1;
+  } else if (!strcmp(channel, "music:downloadOne")) {
+    /* 单曲下载（歌名 + 歌手 → 音源站 → 落盘入库）。
+       参数：[{title, artist}], dir(可空), platform(默认 kuwo), quality(默认 highest) */
+    cJSON *it = mod_arg_at(args, 0);
+    if (cJSON_IsArray(it)) it = cJSON_GetArrayItem(it, 0);
+    const char *title = json_str(it, "title", "");
+    const char *art = json_str(it, "artist", "");
+    if (!*title) { rc = -1; *out_error = mod_ret_error("缺少歌名"); goto done; }
+    const char *d = mod_arg_str(args, 1, "");
+    char *own = NULL;
+    if (!*d) { own = download_dir(); d = own; }
+    path_mkdirs(d);
+    char *err = NULL;
+    int ok = hicn_download(title, art, d, mod_arg_str(args, 2, "kuwo"), mod_arg_str(args, 3, "highest"), &err);
+    free(own);
+    res = cJSON_CreateObject();
+    json_set_bool(res, "ok", ok);
+    cJSON_AddStringToObject(res, "dir", d);
+    if (!ok && err) cJSON_AddStringToObject(res, "error", err);
+    free(err);
   } else if (!strcmp(channel, "music:dailyMove") || !strcmp(channel, "music:dailyKeep") || !strcmp(channel, "music:dailyClean")) {
     res = cJSON_CreateObject();
     cJSON_AddNumberToObject(res, "count", 0);
@@ -2311,7 +2716,7 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
       if (cJSON_IsArray(arr)) {
         cJSON *it = NULL;
         cJSON_ArrayForEach(it, arr) {
-          const char *u = cJSON_IsString(it) ? it->valuestring : json_str(it, "url", "");
+          const char *u = cJSON_IsString(it) ? it->valuestring : json_txt(it, "url", "");
           if (!*u) u = json_str(it, "href", "");
           if (!*u) continue;
           char *full = url_resolve(url, u);
@@ -2356,7 +2761,7 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
     int total = cJSON_IsArray(items) ? cJSON_GetArraySize(items) : 0;
     for (int i = 0; i < total && i < 200; i++) {
       cJSON *it = cJSON_GetArrayItem(items, i);
-      const char *u = cJSON_IsString(it) ? it->valuestring : json_str(it, "url", "");
+      const char *u = cJSON_IsString(it) ? it->valuestring : json_txt(it, "url", "");
       const char *nm = cJSON_IsObject(it) ? json_str(it, "name", "") : "";
       if (!*u) continue;
       if (download_one(u, nm, dir)) n++;
