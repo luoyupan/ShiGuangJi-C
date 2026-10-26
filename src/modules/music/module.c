@@ -663,6 +663,14 @@ static char *match_lrc(const char *audio, const char *title, const char *artist)
   sprintf(lrc, "%s.lrc", p);
   if (path_exists(lrc)) { free(p); free(dir); return lrc; }
   free(lrc); free(p);
+  /* 1b) 旧版下载器写成「音频全名 + .lrc」（X.flac.lrc）—— 库里已有这类文件，
+         认一下，别让用户手动改名（新一轮起改为写 X.lrc） */
+  char *full = path_join(dir, path_basename(audio));
+  char *lrc2 = (char *)xmalloc(strlen(full) + 5);
+  sprintf(lrc2, "%s.lrc", full);
+  free(full);
+  if (path_exists(lrc2)) { free(dir); return lrc2; }
+  free(lrc2);
   /* 2) 库级索引：同名 / 标题 / 标题-歌手 */
   char *n1 = norm_name(stem);
   char *n2 = title && *title ? norm_name(title) : NULL;
@@ -2071,19 +2079,32 @@ static cJSON *M_daily_pull(char **out_error) {
         if (ok) {
           json_set_bool(o, "ok", 1);
           cJSON_AddStringToObject(o, "file", real ? real : fn);
-          free(real);
           cJSON_AddStringToObject(o, "level", mi ? json_txt(mi, "level", "") : "");
           cJSON_AddStringToObject(o, "format", mi ? json_txt(mi, "format", "") : "");
           cJSON_AddStringToObject(o, "cover", json_txt(song, "pic_url", ""));
           char *lrc = hicn_get_lyric(song);
           if (lrc && *lrc) {
+            /* 🔴 歌词必须叫「同名去掉音频扩展名」：X.flac → X.lrc。
+               写成 X.flac.lrc 的话 match_lrc 按同目录同名找 X.lrc 就找不到，
+               界面上就是「下到了歌词但认不出来」。重名后缀也要跟着音频走。
+               🔴 名字要从**已落盘的真实路径**取（可能有 " (2)"），但 real 下面要
+               free —— 先拷进 base 再 free，别在 free 之后用指针。 */
+            char base[MAX_PATH];
+            snprintf(base, sizeof(base), "%s", real ? path_basename(real) : fn);
+            char *bdot = strrchr(base, '.');
+            if (bdot) *bdot = 0;
             char lp[MAX_PATH];
-            snprintf(lp, sizeof(lp), "%s.lrc", fn);
+            snprintf(lp, sizeof(lp), "%s.lrc", base);
             char *ldest = path_join(dir, lp);
-            if (file_write_all(ldest, (const unsigned char *)lrc, strlen(lrc))) json_set_bool(o, "lrc", 1);
+            if (file_write_all(ldest, (const unsigned char *)lrc, strlen(lrc))) {
+              json_set_bool(o, "lrc", 1);
+              cJSON_DeleteItemFromObjectCaseSensitive(o, "lrcPath");
+              cJSON_AddStringToObject(o, "lrcPath", ldest); /* 后面「删除/移动」要连歌词一起处理 */
+            }
             free(ldest);
           }
           free(lrc);
+          free(real);
           done++;
         } else {
           json_set_bool(o, "ok", 0);
@@ -2126,6 +2147,203 @@ static cJSON *M_daily_pull(char **out_error) {
   cJSON_AddNumberToObject(res, "downloaded", done);
   cJSON_AddItemToObject(res, "batch", batch);
   ms_emit("daily");
+  return res;
+}
+
+/* ============================================================
+ *  每日推荐的批量操作：删除 / 保留 / 移到音乐库
+ * ------------------------------------------------------------
+ *  🔴 这三个通道以前是空壳（只 return {count:0}，什么都不做），
+ *     界面上却照样弹「已删除 N 个文件」—— 用户去文件夹一看文件还在。
+ *     现在真删 / 真移，返回值也换成界面真正读的字段名（deleted / moved / kept）。
+ *  🔴 歌词要连坐：只删音频会留下孤儿 .lrc，只移音频过去也配不到词。
+ * ============================================================ */
+static int files_has(cJSON *files, const char *p) {
+  if (!p || !*p || !cJSON_IsArray(files)) return 0;
+  cJSON *x = NULL;
+  cJSON_ArrayForEach(x, files) if (cJSON_IsString(x) && !strcmp(x->valuestring, p)) return 1;
+  return 0;
+}
+/* 目标目录里已有同名文件时，退回 " (2)" 这种防重名名 */
+static char *uniq_dest(const char *dir, const char *name) {
+  char *p = path_join(dir, name);
+  if (!path_exists(p)) return p;
+  char base[MAX_PATH];
+  snprintf(base, sizeof(base), "%s", name);
+  char *dot = strrchr(base, '.');
+  for (int i = 2; i < 100; i++) {
+    char cand[MAX_PATH];
+    if (dot) {
+      *dot = 0;
+      snprintf(cand, sizeof(cand), "%s (%d)%s", base, i, dot + 1);
+    } else {
+      snprintf(cand, sizeof(cand), "%s (%d)", base, i);
+    }
+    free(p);
+    p = path_join(dir, cand);
+    if (!path_exists(p)) return p;
+  }
+  return p;
+}
+/* 跨盘也能用：MOVEFILE_COPY_ALLOWED 会让系统「复制 + 删源」 */
+static int move_any(const char *src, const char *dst) {
+  wchar_t *ws = u8_to_w(src), *wd = u8_to_w(dst);
+  BOOL ok = MoveFileExW(ws, wd, MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH);
+  free(ws); free(wd);
+  return ok ? 1 : 0;
+}
+/* 找到某首歌该连坐删除/搬走的歌词路径（新命名 + 旧命名都覆盖） */
+static char *sibling_lrc(const cJSON *it) {
+  const char *lp = json_str(it, "lrcPath", "");
+  if (*lp && path_exists(lp)) return xstrdup(lp);
+  const char *f = json_str(it, "file", "");
+  if (!*f) return NULL;
+  char *dir = path_dirname(f);
+  char stem[MAX_PATH];
+  snprintf(stem, sizeof(stem), "%s", path_basename(f));
+  char *dot = strrchr(stem, '.');
+  if (dot) *dot = 0;
+  char nm[MAX_PATH];
+  snprintf(nm, sizeof(nm), "%s.lrc", stem);           /* X.lrc */
+  char *a = path_join(dir, nm);
+  if (path_exists(a)) { free(dir); return a; }
+  free(a);
+  snprintf(nm, sizeof(nm), "%s.lrc", path_basename(f)); /* 旧：X.flac.lrc */
+  a = path_join(dir, nm);
+  if (path_exists(a)) { free(dir); return a; }
+  free(a); free(dir);
+  return NULL;
+}
+static cJSON *daily_clean(cJSON *files) {
+  cJSON *cfg = daily_config();
+  cJSON *batch = cJSON_GetObjectItemCaseSensitive(cfg, "batch");
+  cJSON *items = cJSON_IsObject(batch) ? cJSON_GetObjectItemCaseSensitive(batch, "items") : NULL;
+  int deleted = 0, failed = 0;
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, items) {
+    const char *f = json_str(it, "file", "");
+    if (!*f || !files_has(files, f)) continue;
+    char fcopy[MAX_PATH];
+    snprintf(fcopy, sizeof(fcopy), "%s", f);
+    char *lr = sibling_lrc(it);
+    if (path_exists(fcopy)) {
+      if (file_delete(fcopy)) deleted++;
+      else failed++;
+    }
+    if (lr && path_exists(lr)) file_delete(lr);
+    free(lr);
+    /* 同 Electron 版口径：条目留在列表里但清空路径，界面上显示成「已删」 */
+    cJSON_DeleteItemFromObjectCaseSensitive(it, "file");
+    cJSON_AddStringToObject(it, "file", "");
+    cJSON_DeleteItemFromObjectCaseSensitive(it, "lrcPath");
+    json_set_bool(it, "lrc", 0);
+    json_set_bool(it, "ok", 0);
+    cJSON_DeleteItemFromObjectCaseSensitive(it, "error");
+    json_set_bool(it, "deleted", 1); /* 界面据此显示「已删除」，而不是「失败」 */
+  }
+  set_defaults("daily", cfg);
+  cJSON_Delete(cfg);
+  cJSON *res = cJSON_CreateObject();
+  cJSON_AddNumberToObject(res, "deleted", deleted);
+  cJSON_AddNumberToObject(res, "failed", failed);
+  return res;
+}
+static cJSON *daily_keep(cJSON *files) {
+  cJSON *cfg = daily_config();
+  cJSON *batch = cJSON_GetObjectItemCaseSensitive(cfg, "batch");
+  cJSON *items = cJSON_IsObject(batch) ? cJSON_GetObjectItemCaseSensitive(batch, "items") : NULL;
+  int kept = 0;
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, items) {
+    const char *f = json_str(it, "file", "");
+    if (!*f || !files_has(files, f)) continue;
+    json_set_bool(it, "kept", 1);
+    kept++;
+  }
+  set_defaults("daily", cfg);
+  cJSON_Delete(cfg);
+  cJSON *res = cJSON_CreateObject();
+  cJSON_AddNumberToObject(res, "kept", kept);
+  return res;
+}
+static cJSON *daily_move(cJSON *files) {
+  cJSON *root = ms_get_root();
+  cJSON *roots = cJSON_GetObjectItemCaseSensitive(root, "roots");
+  cJSON *r0 = cJSON_IsArray(roots) ? cJSON_GetArrayItem(roots, 0) : NULL;
+  const char *target = cJSON_IsString(r0) ? r0->valuestring : "";
+  if (!*target) { cJSON_Delete(root); return NULL; } /* 调用处报错 */
+  path_mkdirs(target);
+  cJSON *cfg = daily_config();
+  cJSON *batch = cJSON_GetObjectItemCaseSensitive(cfg, "batch");
+  cJSON *items = cJSON_IsObject(batch) ? cJSON_GetObjectItemCaseSensitive(batch, "items") : NULL;
+  cJSON *tracks = cJSON_GetObjectItemCaseSensitive(root, "tracks");
+  int moved = 0;
+  cJSON *it = NULL;
+  cJSON_ArrayForEach(it, items) {
+    const char *f = json_str(it, "file", "");
+    if (!*f || !files_has(files, f)) continue;
+    if (json_bool(it, "moved", 0)) continue;
+    char src[MAX_PATH];
+    snprintf(src, sizeof(src), "%s", f);
+    if (!path_exists(src)) {
+      cJSON_DeleteItemFromObjectCaseSensitive(it, "error");
+      cJSON_AddStringToObject(it, "error", "文件不在了");
+      continue;
+    }
+    char *lr = sibling_lrc(it);
+    char *dest = uniq_dest(target, path_basename(src));
+    if (!move_any(src, dest)) {
+      cJSON_DeleteItemFromObjectCaseSensitive(it, "error");
+      cJSON_AddStringToObject(it, "error", "移动失败（文件可能正被播放器占用）");
+      free(dest); free(lr);
+      continue;
+    }
+    cJSON_DeleteItemFromObjectCaseSensitive(it, "file");
+    cJSON_AddStringToObject(it, "file", dest);
+    json_set_bool(it, "moved", 1);
+    /* 歌词跟着走，并改名叫「同名 .lrc」，库里才配得上词 */
+    if (lr) {
+      char lbase[MAX_PATH];
+      snprintf(lbase, sizeof(lbase), "%s", path_basename(dest));
+      char *ld = strrchr(lbase, '.');
+      if (ld) *ld = 0;
+      char lnm[MAX_PATH];
+      snprintf(lnm, sizeof(lnm), "%s.lrc", lbase);
+      char *ldest = uniq_dest(target, lnm);
+      if (move_any(lr, ldest)) {
+        cJSON_DeleteItemFromObjectCaseSensitive(it, "lrcPath");
+        cJSON_AddStringToObject(it, "lrcPath", ldest);
+        json_set_bool(it, "lrc", 1);
+        free(ldest);
+      }
+      free(lr);
+    }
+    /* 立刻入库，别让用户还得自己点一次「重新扫描」。
+       🔴 下载那一步就已经入过库了，旧条目指向的是每日文件夹里的老路径，
+          搬家后必须删掉，否则库里会留一条点不开的灰记录。 */
+    for (int i = cJSON_GetArraySize(tracks) - 1; i >= 0; i--) {
+      cJSON *e = cJSON_GetArrayItem(tracks, i);
+      if (e && !strcmp(json_str(e, "path", ""), src)) cJSON_DeleteItemFromArray(tracks, i);
+    }
+    int exists = 0;
+    cJSON *t = NULL;
+    cJSON_ArrayForEach(t, tracks) if (!strcmp(json_str(t, "path", ""), dest)) { exists = 1; break; }
+    if (!exists) {
+      TrackMeta m; sniff_meta(dest, &m);
+      char *lrc2 = match_lrc(dest, m.title, m.artist);
+      cJSON *o = track_json(dest, &m, lrc2 ? lrc2 : "");
+      cJSON_AddItemToArray(tracks, o);
+      free(lrc2);
+    }
+    free(dest);
+    moved++;
+  }
+  set_defaults("daily", cfg);
+  cJSON_Delete(cfg);
+  ms_save(root);
+  cJSON_Delete(root);
+  cJSON *res = cJSON_CreateObject();
+  cJSON_AddNumberToObject(res, "moved", moved);
   return res;
 }
 
@@ -2559,8 +2777,15 @@ static int music_invoke(const char *channel, const char *args_json, char **out_j
     if (!ok && err) cJSON_AddStringToObject(res, "error", err);
     free(err);
   } else if (!strcmp(channel, "music:dailyMove") || !strcmp(channel, "music:dailyKeep") || !strcmp(channel, "music:dailyClean")) {
-    res = cJSON_CreateObject();
-    cJSON_AddNumberToObject(res, "count", 0);
+    cJSON *files = mod_arg_at(args, 0);
+    if (!cJSON_IsArray(files)) { rc = -1; *out_error = mod_ret_error("要传文件路径数组"); goto done; }
+    if (!strcmp(channel, "music:dailyClean")) res = daily_clean(files);
+    else if (!strcmp(channel, "music:dailyKeep")) res = daily_keep(files);
+    else {
+      res = daily_move(files);
+      if (!res) { rc = -1; *out_error = mod_ret_error("还没设置音乐库目录：先去「音乐 → 库目录」加一个文件夹"); goto done; }
+    }
+    ms_emit("daily");
   } else if (!strcmp(channel, "music:sourceConfig")) {
     cJSON *c = get_defaults("source");
     if (!cJSON_GetObjectItemCaseSensitive(c, "urls")) cJSON_AddItemToObject(c, "urls", cJSON_CreateArray());

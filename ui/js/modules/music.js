@@ -566,7 +566,16 @@ const MusicView = {
       const canPlay = !!(it.ok && it.file);
       const checked = !!(canPlay && sel.has(it.file));
       const isCur = !!(canPlay && curPath && it.file === curPath);
-      list.appendChild(el('div', {
+      /* 状态标签：删掉的别再显示「失败」，否则用户以为没删干净 */
+      let chip;
+      if (it.deleted) chip = el('span', { class: 'chip warn', text: '已删除' });
+      else if (it.moved) chip = el('span', { class: 'chip accent', text: '已入库' });
+      else if (it.kept) chip = el('span', { class: 'chip', text: '保留' });
+      else if (it.ok) chip = el('span', { class: 'chip', text: it.level || it.format || '' });
+      else chip = el('span', { class: 'chip warn', text: '失败' });
+      const sub = it.deleted ? ' · 已删除'
+        : (it.ok ? '' : ' · 未下到：' + (it.error || '失败'));
+      const row = el('div', {
         class: 'daily-row' + (canPlay ? ' playable' : ' bad') + (checked ? ' on' : '') + (isCur ? ' playing' : ''),
         title: canPlay ? '点一下试听（再点一次暂停）' : '',
         onclick: () => { if (canPlay) this.playDaily(it.file); }
@@ -582,12 +591,11 @@ const MusicView = {
             uiSpan(isCur && playing ? 'pause' : 'play', '')) : null),
         el('div', { class: 'grow' },
           el('div', { class: 'gname ellipsis', text: it.title || '(未知)' }),
-          el('div', { class: 'gsub ellipsis', text: (it.artist || '') + (it.ok ? '' : ' · 未下到：' + (it.error || '失败')) })),
+          el('div', { class: 'gsub ellipsis', text: (it.artist || '') + sub })),
         /* 「词」标记：这首歌的歌词跟着音频一起下下来了（站点没有的就没有） */
         it.lrc ? el('span', { class: 'chip', title: '歌词已下载（同名 .lrc，放在音频旁边）', text: '词' }) : null,
-        it.moved ? el('span', { class: 'chip accent', text: '已入库' })
-          : (it.kept ? el('span', { class: 'chip', text: '保留' })
-            : (it.ok ? el('span', { class: 'chip', text: it.level || it.format || '' }) : el('span', { class: 'chip warn', text: '失败' })))));
+        chip);
+      list.appendChild(row);
     }
     main.appendChild(list);
   },
