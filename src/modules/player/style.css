@@ -1,0 +1,269 @@
+/* ============================================================
+ *  播放器插件样式（编进 player.dll 的 UI_CSS 资源）
+ *  画面区固定深色（播放器惯例），工具条跟随应用主题变量。
+ * ============================================================ */
+.pl-wrap {
+  height: 100%;
+  min-height: 460px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  position: relative;
+}
+.pl-wrap.drop { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+/* ---------------- 顶栏 ---------------- */
+.pl-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex: 0 0 auto;
+}
+.pl-title { font-size: 13px; color: var(--text); }
+.pl-grow { flex: 1 1 auto; min-width: 0; }
+
+.pl-btn {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+.pl-btn:hover { background: var(--accent-soft); color: var(--accent); }
+.pl-btn:active { transform: scale(.94); }
+/* 🔴 图标是内联 svg，没有宽高就会按 100% 撑开 —— 必须显式给尺寸 */
+.pl-btn svg { width: 16px; height: 16px; }
+.pl-btn.pl-txt { width: auto; padding: 0 10px; font-size: 12.5px; line-height: 30px; }
+.pl-btn.pl-main { color: var(--text); }
+.pl-btn.pl-main svg { width: 19px; height: 19px; }
+.pl-btn.pl-mini { width: 24px; height: 24px; }
+.pl-btn.pl-mini svg { width: 13px; height: 13px; }
+
+.pl-chip {
+  flex: 0 0 auto;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* ---------------- 画面区 ---------------- */
+.pl-body { flex: 1 1 auto; display: flex; min-height: 0; }
+
+.pl-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.pl-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  outline: none;
+}
+
+.pl-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  pointer-events: none;
+}
+.pl-overlay > * { pointer-events: auto; }
+
+.pl-bigplay {
+  width: 68px;
+  height: 68px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+  color: #fff;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+.pl-bigplay:hover { background: rgba(255, 255, 255, .26); transform: scale(1.06); }
+.pl-bigplay svg { width: 30px; height: 30px; }
+
+.pl-hint {
+  color: rgba(255, 255, 255, .62);
+  font-size: 13px;
+  text-align: center;
+  max-width: 420px;
+  line-height: 1.7;
+}
+.pl-err {
+  max-width: 520px;
+  padding: 12px 16px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 96, 96, .14);
+  border: 1px solid rgba(255, 96, 96, .38);
+  color: #ffd9d9;
+  font-size: 12.5px;
+  line-height: 1.7;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.pl-err-t { color: #ffd9d9; }
+
+/* ---------------- 控制条 ---------------- */
+.pl-ctrl {
+  flex: 0 0 auto;
+  padding: 6px 12px 9px;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+.pl-seekrow { display: flex; align-items: center; }
+.pl-btnrow { display: flex; align-items: center; gap: 4px; }
+
+.pl-seek {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+.pl-seek::-webkit-slider-runnable-track {
+  height: 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dim) 26%, transparent);
+}
+.pl-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.pl-seek:hover::-webkit-slider-thumb { transform: scale(1.12); }
+
+.pl-times { display: inline-flex; align-items: center; gap: 3px; margin-left: 10px; font-size: 12px; color: var(--text); }
+.pl-time { font-variant-numeric: tabular-nums; }
+.pl-time.dim { color: var(--text-mute); }
+.pl-slash { color: var(--text-mute); }
+
+.pl-volwrap { display: inline-flex; align-items: center; gap: 2px; }
+.pl-vol {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 78px;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.pl-vol::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-dim) 26%, transparent);
+}
+.pl-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.pl-vol:hover::-webkit-slider-thumb { background: var(--accent); }
+
+/* ---------------- 播放列表 ---------------- */
+.pl-aside {
+  flex: 0 0 268px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 92%, var(--bg));
+}
+.pl-aside-hd {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.pl-count {
+  font-size: 11px;
+  color: var(--text-mute);
+  background: color-mix(in srgb, var(--text-dim) 12%, transparent);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.pl-list { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 4px 0 8px; }
+.pl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.pl-item:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.pl-item.on { background: var(--accent-soft); border-left-color: var(--accent); color: var(--accent); }
+.pl-idx { flex: 0 0 auto; width: 20px; text-align: right; font-size: 11px; color: var(--text-mute); font-variant-numeric: tabular-nums; }
+.pl-nm { flex: 1 1 auto; min-width: 0; }
+.pl-x {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: var(--text-mute);
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: 6px;
+  opacity: 0;
+}
+.pl-item:hover .pl-x { opacity: 1; }
+.pl-x:hover { color: #ff6b6b; background: rgba(255, 107, 107, .12); }
+.pl-empty { padding: 22px 12px; text-align: center; color: var(--text-mute); font-size: 12.5px; }
+
+/* ---------------- 全屏 ---------------- */
+.pl-wrap.is-fs { border: 0; border-radius: 0; min-height: 0; }
+.pl-wrap.is-fs .pl-video { object-fit: contain; }
+
+/* 窄窗口：播放列表收窄，别把画面挤没 */
+@media (max-width: 900px) {
+  .pl-aside { flex-basis: 200px; }
+  .pl-vol { width: 54px; }
+}

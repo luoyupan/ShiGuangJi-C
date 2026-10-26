@@ -140,6 +140,7 @@ $mods = [ordered]@{
   "browser" = @(@("src\modules\browser\renderer.js"), $null)
   "link"    = @(@("ui\js\modules\link.js"), $null)
   "photos"  = @(@("ui\js\modules\photos.js"), $null)
+  "player"  = @(@("src\modules\player\renderer.js"), "src\modules\player\style.css")
 }
 foreach ($id in $mods.Keys) {
   if ($Only -and $Only -ne $id) { continue }

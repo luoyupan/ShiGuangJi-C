@@ -1,0 +1,14 @@
+{
+  "id": "player",
+  "route": "#/p/player",
+  "title": "播放器",
+  "desc": "本地视频播放器 · 播放列表 / 字幕 / 截图 / 倍速 / 续播",
+  "icon": "play",
+  "accent": "#ff7043",
+  "order": 85,
+  "detail": "对标常见播放器的常用操作：打开文件或整个文件夹、播放列表、进度拖动、音量与静音、0.5~3 倍速、全屏、截图、SRT/ASS 字幕、按播放位置续播、顺序/单曲/随机。全部在这一个 dll 里，删掉就没了。",
+  "builtin": false,
+  "channels": ["player:"],
+  "version": "1.0.0",
+  "author": "拾光集"
+}
