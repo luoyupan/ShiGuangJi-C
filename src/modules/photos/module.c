@@ -778,6 +778,78 @@ static void geo_nominatim(cJSON *arr, const char *q) {
   }
   cJSON_Delete(j);
 }
+/* ============================================================
+ *  天地图请求头
+ * ------------------------------------------------------------
+ *  🔴🔴 必须带 Referer！用户在天地图控制台申请的 key 默认是「浏览器端」，
+ *     原生程序裸发请求会被判成服务端调用，回：
+ *       {"code":301012,"msg":"权限类型错误","resolve":"Key权限类型为:浏览器端，请使用浏览器访问！"}
+ *     结果就是**在线地名搜索全军覆没**，界面上只剩内置离线表里的知名地点能搜到，
+ *     小地方（夏河县、桑科草原这类）一律「没找到」。
+ * ============================================================ */
+#define TDT_HEADERS "Referer: http://127.0.0.1/\r\nAccept: application/json\r\nUser-Agent: Mozilla/5.0\r\n"
+static int g_tdt_err = 0; /* 天地图最近一次业务错误码（301012 = key 类型不对）；0 = 没问题 */
+
+/* "经度,纬度" → 拆开（v2 接口的坐标都长这样，注意经度在前） */
+static int geo_split_lonlat(const char *s, double *lat, double *lng) {
+  if (!s || !*s) return 0;
+  const char *c = strchr(s, ',');
+  if (!c) return 0;
+  double x = atof(s), y = atof(c + 1);
+  if (!(x >= -180 && x <= 180 && y >= -90 && y <= 90) || (x == 0 && y == 0)) return 0;
+  *lng = x; *lat = y;
+  return 1;
+}
+/* 把天地图的错误码记下来，好让提示说人话（别一律「没找到」） */
+static void geo_tdt_note_error(const cJSON *j) {
+  const cJSON *c = cJSON_GetObjectItemCaseSensitive(j, "code");
+  if (cJSON_IsNumber(c) && c->valueint) g_tdt_err = c->valueint;
+  const cJSON *st = cJSON_GetObjectItemCaseSensitive(j, "status");
+  if (cJSON_IsObject(st)) {
+    const cJSON *ic = cJSON_GetObjectItemCaseSensitive(st, "infocode");
+    if (cJSON_IsNumber(ic) && ic->valueint != 1000) g_tdt_err = ic->valueint;
+  }
+}
+/* 地名搜索 v2.0：keyword 搜索，能出「夏河县」这类行政区，也能出 POI
+   （geocoder 是地址解析，小地方/POI 命中率低，两个接口互补） */
+static void geo_tianditu_v2(cJSON *arr, const char *q, const char *tk) {
+  if (!tk || !*tk) return;
+  char safe[200];
+  snprintf(safe, sizeof(safe), "%s", q);
+  for (char *p = safe; *p; p++) if (*p == '"' || *p == '\\' || *p == '\n' || *p == '\r') *p = ' ';
+  char post[512];
+  snprintf(post, sizeof(post),
+      "{\"keyWord\":\"%s\",\"level\":12,\"mapBound\":\"73.5,3.8,135.1,53.6\","
+      "\"queryType\":1,\"start\":0,\"count\":10}", safe);
+  char *penc = url_encode(post), *tenc = url_encode(tk);
+  if (!penc || !tenc) { free(penc); free(tenc); return; }
+  size_t cap = strlen(penc) + strlen(tenc) + 128;
+  char *url = (char *)xmalloc(cap);
+  snprintf(url, cap, "https://api.tianditu.gov.cn/v2/search?postStr=%s&type=query&tk=%s", penc, tenc);
+  int status = 0;
+  char *body = g_host->http_request("GET", url, TDT_HEADERS, NULL, 0, 7000, &status, NULL);
+  free(url); free(penc); free(tenc);
+  if (!body || status != 200) { if (body) g_host->dealloc(body); return; }
+  cJSON *j = cJSON_Parse(body);
+  g_host->dealloc(body);
+  if (!cJSON_IsObject(j)) { cJSON_Delete(j); return; }
+  geo_tdt_note_error(j);
+  double lat = 0, lng = 0;
+  /* ① 行政区（搜「夏河县」就是这一路） */
+  const cJSON *area = cJSON_GetObjectItemCaseSensitive(j, "area");
+  if (cJSON_IsObject(area) && geo_split_lonlat(json_str(area, "lonlat", ""), &lat, &lng)) {
+    geo_add(arr, json_str(area, "name", ""), "天地图 · 行政区", lat, lng, "天地图");
+  }
+  /* ② POI */
+  const cJSON *pois = cJSON_GetObjectItemCaseSensitive(j, "pois");
+  const cJSON *p = NULL;
+  cJSON_ArrayForEach(p, pois) {
+    if (!cJSON_IsObject(p)) continue;
+    if (!geo_split_lonlat(json_str(p, "lonlat", ""), &lat, &lng)) continue;
+    geo_add(arr, json_str(p, "name", ""), json_str(p, "address", ""), lat, lng, "天地图");
+  }
+  cJSON_Delete(j);
+}
 static void geo_tianditu(cJSON *arr, const char *q, const char *tk) {
   if (!tk || !*tk) return;
   char safe[256];
@@ -791,17 +863,29 @@ static void geo_tianditu(cJSON *arr, const char *q, const char *tk) {
   char *url = (char *)xmalloc(cap);
   snprintf(url, cap, "https://api.tianditu.gov.cn/geocoder?ds=%s&tk=%s", denc, tenc);
   int status = 0;
-  char *body = g_host->http_request("GET", url, "Accept: application/json\r\n", NULL, 0, 7000, &status, NULL);
+  /* 🔴 这里的 Referer 不是可选项：浏览器端 key 没有 Referer 会被回 301012 直接拒绝 */
+  char *body = g_host->http_request("GET", url, TDT_HEADERS, NULL, 0, 7000, &status, NULL);
   free(url); free(denc); free(tenc);
   if (!body || status != 200) { if (body) g_host->dealloc(body); return; }
   cJSON *j = cJSON_Parse(body);
   g_host->dealloc(body);
   if (!cJSON_IsObject(j)) { cJSON_Delete(j); return; }
+  geo_tdt_note_error(j);
   cJSON *loc = cJSON_GetObjectItemCaseSensitive(j, "location");
   if (cJSON_IsObject(loc)) {
-    double lat = geo_num(loc, "lat"), lng = geo_num(loc, "lon");
-    const char *addr = json_str(j, "formatted_address", "");
-    geo_add(arr, *addr ? addr : q, addr, lat, lng, "天地图");
+    /* 🔴 score 是置信度：实测真命中 99~100；胡敲的串也能拿 57 并返回一个乱坐标。
+       低于 70 一律丢掉 —— 宁可「没找到」，也不能把照片钉到隔壁省去。 */
+    double score = geo_num(loc, "score");
+    if (score >= 70) {
+      double lat = geo_num(loc, "lat"), lng = geo_num(loc, "lon");
+      /* geocoder 没有 formatted_address，用 level 说明这是什么级别的点位 */
+      const char *lvl = json_str(loc, "level", "");
+      char addr[128];
+      if (*lvl) snprintf(addr, sizeof(addr), "天地图 · %s", lvl);
+      else snprintf(addr, sizeof(addr), "天地图");
+      const char *nm = json_str(loc, "keyWord", "");
+      geo_add(arr, *nm ? nm : q, addr, lat, lng, "天地图");
+    }
   }
   cJSON_Delete(j);
 }
@@ -816,18 +900,37 @@ static int photos_geocode(cJSON *args, char **out_json, char **out_error) {
   if (!*s) { *out_error = mod_ret_error("先输入一个地点名，比如：上海 / 京都"); return -1; }
   cJSON *arr = cJSON_CreateArray();
   int top = geo_offline(arr, s);
-  /* 常见地名 / 模糊命中直接离线返回，不联网等 7 秒；完全没命中才查天地图 / OSM */
+  /* 常见地名 / 模糊命中直接离线返回，不联网等 7 秒；完全没命中才联网。
+     🔴 联网顺序有讲究：先「地名搜索 v2」（关键字，行政区 + POI 都有），
+        拿不到再退回「geocoder」（地址解析），两个都没戏才试 OSM。
+        以前只调 geocoder，小地方（夏河县、某个乡镇）基本搜不出来。 */
+  /* 🔴 tk 必须拷进本地缓冲：state 是临时解析出来的，delete 之后指针就悬垂了 */
+  char tk[128] = "";
   if (top < 30) {
     cJSON *st = P_state_root();
     cJSON *map = cJSON_GetObjectItemCaseSensitive(st, "map");
-    const char *tk = map ? json_str(map, "tk", "") : "";
-    if (tk && *tk) geo_tianditu(arr, s, tk);
-    else geo_nominatim(arr, s);
+    const char *t0 = map ? json_str(map, "tk", "") : "";
+    snprintf(tk, sizeof(tk), "%s", t0);
+    if (*tk) {
+      g_tdt_err = 0;
+      int before = cJSON_GetArraySize(arr);
+      geo_tianditu_v2(arr, s, tk);
+      if (cJSON_GetArraySize(arr) == before) geo_tianditu(arr, s, tk);
+    }
     cJSON_Delete(st);
+    /* OSM 兜底：天地图没结果（或没填 tk）时再试，多一条路总比直接报错好 */
+    if (!cJSON_GetArraySize(arr)) geo_nominatim(arr, s);
   }
   if (!cJSON_GetArraySize(arr)) {
     cJSON_Delete(arr);
-    *out_error = mod_ret_error("没找到「%s」。试试更完整的名字，或在设置里填天地图 tk。", s);
+    if (g_tdt_err == 301012)
+      *out_error = mod_ret_error("天地图拒绝了请求（301012：key 类型不对）。到天地图控制台确认这个 key 的类型是「浏览器端」，或换一个新 key 再搜。");
+    else if (g_tdt_err)
+      *out_error = mod_ret_error("没找到「%s」，天地图返回错误码 %d。可以试试加省市名（如「甘肃 夏河县」）。", s, g_tdt_err);
+    else if (*tk)
+      *out_error = mod_ret_error("没找到「%s」。试试加省市名（如「甘肃 夏河县」），或直接在地图上点一下取坐标。", s);
+    else
+      *out_error = mod_ret_error("没找到「%s」。小地方要联网搜，建议在「设置 → 图片 → 地图」里填一个天地图 tk；也可以直接在地图上点一下取坐标。", s);
     return -1;
   }
   *out_json = mod_ret_json(arr);
