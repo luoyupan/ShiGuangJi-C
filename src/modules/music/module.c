@@ -1185,7 +1185,7 @@ static int library_has(const char *title, const char *artist) {
 }
 
 /* ============================================================
- *  多站合一音源（flac.music.hi.cn 同款协议）
+ *  多站合一音源（走同一套三接口协议的站点，域名由用户自己填）
  * ------------------------------------------------------------
  *  站点前端是 SPA，页面源码里没有任何音频直链 —— 老的「抓页面 href」
  *  那套在这里必然 0 命中（界面报「站点没搜到这首歌」就是这个原因）。
@@ -1198,7 +1198,10 @@ static int library_has(const char *title, const char *artist) {
  *  🔴 sign 是搜索返回的，必须原样回传；自己拼不出来。
  *  🔴 直链在 other-*.kuwo.cn 这类第三方 CDN 上，下载要带 UA，否则 403。
  * ============================================================ */
-#define HICN_HOST_DEFAULT "flac.music.hi.cn"
+/* 🔴 发布版不内置任何第三方音源站：默认空，由用户在「设置 → 音乐 → 下载源」自己填。
+   未配置时 hicn_post 直接返回明确错误，不发任何请求。 */
+#define HICN_HOST_DEFAULT ""
+#define HICN_NO_HOST "未配置音乐下载源：请到「设置 → 音乐 → 下载源 → 搜索地址」填写站点域名"
 #define HICN_UA "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
 /* 站点返回的字段有时是数字、有时是字符串（time / bitrate 都见过两种），
@@ -1222,7 +1225,7 @@ static const char *json_txt(const cJSON *o, const char *key, const char *def) {
 static char *hicn_host(void) {
   cJSON *s = get_defaults("source");
   /* 优先读专用的 host；没填就退到「搜索地址」里的第一条（用户在设置页填的）
-     —— 这样不新增界面字段也能用，填 flac.music.hi.cn 即可。 */
+     —— 这样不新增界面字段也能用，在搜索地址里填站点域名即可。 */
   const char *h = json_str(s, "host", "");
   char *cand = NULL;
   if (!h || !*h) {
@@ -1237,13 +1240,19 @@ static char *hicn_host(void) {
   for (char *q = r; *q; q++) {
     if (*q == '/' || *q == ' ' || *q == '\r' || *q == '\n' || *q == '?') { *q = 0; break; }
   }
-  /* 只认域名形态；填成带 {q} 的搜索结果页模板就当没填 */
-  if (!*r || strchr(r, '{') || strchr(r, '%')) { free(r); r = xstrdup(HICN_HOST_DEFAULT); }
+  /* 只认域名形态；填成带 {q} 的搜索结果页模板就当没填 —— 返回空串，由 hicn_post 报「未配置」 */
+  if (!*r || strchr(r, '{') || strchr(r, '%')) { free(r); r = xstrdup(""); }
   return r;
 }
 /* POST ajax.php?act=xxx，body 是已编码好的 k=v&k=v */
 static cJSON *hicn_post(const char *act, const char *body, char **err) {
   char *host = hicn_host();
+  /* 没配下载源就到此为止：不拼 URL、不发请求、不留猜错的痕迹 */
+  if (!*host) {
+    free(host);
+    if (err) *err = xstrdup(HICN_NO_HOST);
+    return NULL;
+  }
   char url[512];
   snprintf(url, sizeof(url), "https://%s/ajax.php?act=%s", host, act);
   char headers[1024];
