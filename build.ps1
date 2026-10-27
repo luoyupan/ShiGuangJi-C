@@ -11,6 +11,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# 版本号单一来源：改这里即可（package.ps1 与 src\host\sgj.h 需同步）
+# FILEVERSION 必须是 4 段 16 位整数，"1.1.0" 要补成 "1,1,0,0"，否则 rc.exe 报错
+$ver = "1.1.0"
+$verParts = $ver.Split('.')
+while ($verParts.Count -lt 4) { $verParts += "0" }
+$verComma = $verParts -join ","
 $build = Join-Path $root "build"
 $gen = Join-Path $build "gen"
 $modout = Join-Path $build "modules"
@@ -60,7 +66,7 @@ function Build-Host {
   if (Test-Path $icon) {
     $rc2 = Join-Path $gen "app.rc"
     $ic = $icon.Replace('\','\\')
-    $rc2Text = "#pragma code_page(65001)`r`nAPPICON ICON `"$ic`"`r`n1 VERSIONINFO`r`nFILEVERSION 1,0,0,0`r`nPRODUCTVERSION 1,0,0,0`r`nFILEOS 0x40004L`r`nFILETYPE 0x1L`r`nBEGIN`r`n  BLOCK `"StringFileInfo`"`r`n  BEGIN`r`n    BLOCK `"080404B0`"`r`n    BEGIN`r`n      VALUE `"FileDescription`", `"ShiGuangJi C Edition`"`r`n      VALUE `"FileVersion`", `"1.0.0`"`r`n      VALUE `"ProductName`", `"ShiGuangJi`"`r`n      VALUE `"ProductVersion`", `"1.0.0`"`r`n    END`r`n  END`r`n  BLOCK `"VarFileInfo`"`r`n  BEGIN`r`n    VALUE `"Translation`", 0x0804, 1200`r`n  END`r`nEND`r`n"
+    $rc2Text = "#pragma code_page(65001)`r`nAPPICON ICON `"$ic`"`r`n1 VERSIONINFO`r`nFILEVERSION $verComma`r`nPRODUCTVERSION $verComma`r`nFILEOS 0x40004L`r`nFILETYPE 0x1L`r`nBEGIN`r`n  BLOCK `"StringFileInfo`"`r`n  BEGIN`r`n    BLOCK `"080404B0`"`r`n    BEGIN`r`n      VALUE `"FileDescription`", `"ShiGuangJi C Edition`"`r`n      VALUE `"FileVersion`", `"$ver`"`r`n      VALUE `"ProductName`", `"ShiGuangJi`"`r`n      VALUE `"ProductVersion`", `"$ver`"`r`n    END`r`n  END`r`n  BLOCK `"VarFileInfo`"`r`n  BEGIN`r`n    VALUE `"Translation`", 0x0804, 1200`r`n  END`r`nEND`r`n"
     [System.IO.File]::WriteAllText($rc2, $rc2Text, (New-Object System.Text.UTF8Encoding($false)))
     $res += "rc /nologo /fo `"$gen\app.res`" `"$rc2`" && "
     $sources += ' "' + (Join-Path $gen "app.res") + '"'

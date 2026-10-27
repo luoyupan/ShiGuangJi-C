@@ -1,9 +1,9 @@
-﻿# Build a clean distributable folder: dist\ShiGuangJi-1.0.0
+﻿# Build a clean distributable folder: dist\ShiGuangJi-1.1.0
 param([switch]$SkipBuild)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ver = "1.0.0"
+$ver = "1.1.0"
 $distRoot = Join-Path $root "dist"
 $dist = Join-Path $distRoot "ShiGuangJi-$ver"
 
@@ -39,7 +39,7 @@ $readme = @"
 
 目录：
   ShiGuangJi.exe      主程序（界面资源已内嵌）
-  modules\*.dll       七个模块 + 一个示例插件（删哪个就少哪个模块）
+  modules\*.dll       七个内置模块 + 播放器 + 一个示例插件（删哪个就少哪个）
   docs\               架构 / 模块 SDK / 功能对照
 
 数据：

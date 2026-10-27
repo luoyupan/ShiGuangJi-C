@@ -9,6 +9,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # 版本号单一来源：发新版只改这一行（build.ps1 / package.ps1 / src\host\sgj.h 需同步）
+  SGJ_VER: "1.1.0"
+
 jobs:
   build:
     runs-on: windows-latest
@@ -27,26 +31,27 @@ jobs:
       - name: Generate SHA256SUMS
         shell: pwsh
         run: |
-          $dist = "dist/ShiGuangJi-1.0.0"
+          $ver = $env:SGJ_VER
+          $dist = "dist/ShiGuangJi-$ver"
           $lines = @()
           Get-ChildItem $dist -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | Sort-Object FullName | ForEach-Object {
             $h = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
             $rel = $_.FullName.Substring((Resolve-Path $dist).Path.Length + 1).Replace('\', '/')
             $lines += "$h  $rel"
           }
-          $zip = "dist/ShiGuangJi-1.0.0-win64.zip"
+          $zip = "dist/ShiGuangJi-$ver-win64.zip"
           $zh = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
-          $lines += "$zh  ShiGuangJi-1.0.0-win64.zip"
+          $lines += "$zh  ShiGuangJi-$ver-win64.zip"
           $lines | Set-Content "dist/SHA256SUMS.txt" -Encoding ascii
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.0.0
-          name: 拾光集 C 版 1.0.0 · 正式版
-          body_path: docs/发布说明-v1.0.0.md
+          tag_name: v${{ env.SGJ_VER }}
+          name: 拾光集 C 版 ${{ env.SGJ_VER }} · 修 bug 与新功能
+          body_path: docs/发布说明-v${{ env.SGJ_VER }}.md
           files: |
-            dist/ShiGuangJi-1.0.0-win64.zip
+            dist/ShiGuangJi-${{ env.SGJ_VER }}-win64.zip
             dist/SHA256SUMS.txt
           draft: false
           prerelease: false

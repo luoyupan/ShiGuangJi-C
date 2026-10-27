@@ -55,7 +55,7 @@
 
 #define SGJ_APP_NAME "拾光集"
 #define SGJ_APP_ID "ShiGuangJi"
-#define SGJ_VERSION "1.0.0"
+#define SGJ_VERSION "1.1.0"
 #define SGJ_ABI 2
 
 /* ---------------- 动态字符串 ---------------- */
