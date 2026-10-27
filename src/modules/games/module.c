@@ -372,6 +372,102 @@ static cJSON *G_normalize(cJSON *in) {
   }
   return o;
 }
+/* ---------- 归一化：判断「是不是同一款游戏」用 ---------- */
+/* 路径归一：小写、`/`→`\`、去掉结尾反斜杠 */
+static char *path_key(const char *p) {
+  if (!p || !*p) return xstrdup("");
+  char *s = xstrdup(p);
+  for (char *q = s; *q; q++) {
+    if (*q == '/') *q = '\\';
+    *q = (char)tolower((unsigned char)*q);
+  }
+  size_t n = strlen(s);
+  while (n && s[n - 1] == '\\') s[--n] = 0;
+  return s;
+}
+/* 名字归一：小写 + 去掉空格和常见标点（"Battle.net" == "battle net" == "battlenet"） */
+static char *name_key(const char *name) {
+  char *low = str_lower(name ? name : "");
+  char *out = (char *)xmalloc(strlen(low) + 1);
+  size_t k = 0;
+  for (const char *p = low; *p; p++) {
+    if (*p == ' ' || *p == '\t' || *p == '.' || *p == '_' || *p == '-' || *p == '\'' || *p == '"' ||
+        *p == ':' || *p == ',' || *p == '&' || *p == '+' || *p == '(' || *p == ')' ||
+        *p == '[' || *p == ']' || *p == '!' || *p == '?') continue;
+    out[k++] = *p;
+  }
+  out[k] = 0;
+  free(low);
+  return out;
+}
+/* 一条记录的「安装目录」：优先 path，其次主程序所在目录 */
+static char *record_dir_key(cJSON *g) {
+  const char *p = J_str(g, "path", "");
+  if (p && *p) return path_key(p);
+  const char *e = J_str(g, "exe", "");
+  if (e && *e) { char *d = path_dirname(e); char *k = path_key(d); free(d); return k; }
+  return xstrdup("");
+}
+
+/* ---------- 平台客户端 / 运行库：这些不是游戏 ----------
+   🔴 它们和游戏一样有卸载注册表项、一样躺在 SteamLibrary 里，
+      不单列一张表就会被当成「游戏」入库（暴雪战网 / Steamworks Common 就是这么进来的）。 */
+static int is_launcher_or_runtime(const char *name, const char *path, const char *exe) {
+  (void)path;
+  char *nk = name_key(name);
+  int hit = 0;
+  static const char *exact[] = {
+    /* 平台客户端本体 */
+    "steam", "steamvr", "steamworks", "steamclient", "battlenet", "battle.net", "暴雪战网", "战网",
+    "epicgames", "epicgameslauncher", "goggalaxy", "ubisoftconnect", "uplay", "eaapp", "eadesktop",
+    "origin", "rockstargames", "rockstargameslauncher", "socialclub", "wegame", "wegameclient",
+    "hoyoplay", "mihoyolauncher", "riotclient", "riotgames", "playnite", "itch", "xboxapp",
+    "网易游戏", "腾讯游戏", "游戏加加", "游戏平台", "启动器", NULL
+  };
+  for (int i = 0; exact[i]; i++) if (!strcmp(nk, exact[i])) { hit = 1; break; }
+  if (!hit) {
+    /* 长串用包含匹配：这些词出现在真游戏名里的概率几乎为零。
+       🔴 注意这里比的是 **name_key 归一化后的串**（已去掉空格/点/下划线），
+          所以模式本身也必须写成去空格的形态，否则永远匹配不上。 */
+    static const char *contains[] = {
+      "steamworkscommonredistributable", "steamlinuxruntime", "protonexperimental",
+      "protonhotfix", "steamredistributable", "battlenet", "暴雪战网",
+      "epicgameslauncher", "goggalaxy", "ubisoftconnect", "ubisoftgamelauncher",
+      "rockstargameslauncher", "eadesktop", "eaapp", "腾讯游戏平台", "游戏运行库",
+      "游戏必备运行库", NULL
+    };
+    for (int i = 0; contains[i]; i++) if (strstr(nk, contains[i])) { hit = 1; break; }
+  }
+  free(nk);
+  if (hit) return 1;
+  if (exe && *exe) {
+    char *ek = name_key(path_basename(exe));
+    static const char *lexe[] = {
+      "battlenetexe", "steamexe", "steamwebhelperexe", "epicgameslauncherexe",
+      "galaxyclientexe", "ubisoftconnectexe", "uplayexe", "eadesktopexe", "originexe",
+      "wegameexe", "rockstargameslauncherexe", "socialclubhelperexe", "hoyoplayexe",
+      "riotclientuxexe", "riotclientservicesexe", NULL
+    };
+    for (int i = 0; lexe[i]; i++) if (!strcmp(ek, lexe[i])) { hit = 1; break; }
+    free(ek);
+  }
+  return hit;
+}
+/* Steam 里不是游戏的那几个 AppID（运行库 / 运行时 / SteamVR） */
+static int steam_appid_skip(const char *appid) {
+  static const char *bad[] = {
+    "228980",  /* Steamworks Common Redistributables */
+    "250820",  /* SteamVR */
+    "1070560", /* Steam Linux Runtime 1.0 (scout) */
+    "1391110", /* Steam Linux Runtime 2.0 (soldier) */
+    "1628350", /* Steam Linux Runtime 3.0 (sniper) */
+    "1493710", /* Proton Experimental */
+    NULL
+  };
+  for (int i = 0; bad[i]; i++) if (!strcmp(appid, bad[i])) return 1;
+  return 0;
+}
+
 static char *dedupe_key(cJSON *g) {
   const char *appid = J_str(g, "appid", "");
   const char *pf = J_str(g, "platform", "local");
@@ -387,31 +483,153 @@ static char *dedupe_key(cJSON *g) {
   return low;
 }
 
+/* 两条记录是不是同一款游戏。
+   🔴 只看 dedupe_key 不够：Steam 清单写的是 `steam:<appid>`，而目录/注册表扫描
+      写的是 `path:<安装目录>` —— 同一款游戏两套键，于是重复入库
+      （Deadlock / 虹霓深渊2 / 方寸小家 都是这么来两份的）。 */
+static int same_game(cJSON *a, cJSON *b) {
+  char *da = record_dir_key(a), *db = record_dir_key(b);
+  int same = (*da && *db && !strcmp(da, db));
+  free(da); free(db);
+  if (same) return 1;
+  char *ka = dedupe_key(a), *kb = dedupe_key(b);
+  same = !strcmp(ka, kb);
+  free(ka); free(kb);
+  if (same) return 1;
+  /* 名字归一后完全相同 + 同平台 + 至少一边没 appid（两边 appid 不同就不是同一款） */
+  const char *na = J_str(a, "name", ""), *nb = J_str(b, "name", "");
+  if (*na && *nb && !strcmp(J_str(a, "platform", "local"), J_str(b, "platform", "local"))) {
+    char *na2 = name_key(na), *nb2 = name_key(nb);
+    int eq = !strcmp(na2, nb2);
+    free(na2); free(nb2);
+    if (eq) {
+      const char *ap1 = J_str(a, "appid", ""), *ap2 = J_str(b, "appid", "");
+      if (!*ap1 || !*ap2) return 1;
+    }
+  }
+  return 0;
+}
+
+/* 谁的信息更全，合并时就留谁 */
+static int score_record(cJSON *g) {
+  int s = 0;
+  if (J_str(g, "appid", "")[0]) s += 4;
+  if (J_str(g, "cover", "")[0] || J_str(g, "coverLocal", "")[0]) s += 2;
+  if (J_str(g, "exe", "")[0]) s += 1;
+  if (J_str(g, "path", "")[0]) s += 1;
+  return s;
+}
+
+/* 把 drop 并进 keep：补空字段、数值取大、布尔取或、分类并集 */
+static void G_merge_into(cJSON *keep, cJSON *drop) {
+  static const char *fills[] = { "cover", "coverLocal", "coverKind", "exe", "launch", "watchExe",
+    "path", "publisher", "version", "uninstallString", "installDate", "appid",
+    "header", "description", "modDir", "installLocation", NULL };
+  for (int i = 0; fills[i]; i++) {
+    if (!J_str(keep, fills[i], "")[0] && J_str(drop, fills[i], "")[0])
+      J_set_str(keep, fills[i], J_str(drop, fills[i], ""));
+  }
+  static const char *nums[] = { "playTime", "playCount", "size", "sizeComputedAt", NULL };
+  for (int i = 0; nums[i]; i++) {
+    int64_t a = (int64_t)J_num(keep, nums[i], 0), b = (int64_t)J_num(drop, nums[i], 0);
+    if (b > a) json_set_int(keep, nums[i], b);
+  }
+  static const char *bools[] = { "favorite", "hidden", "installed", "categoryLocked", NULL };
+  for (int i = 0; bools[i]; i++)
+    if (J_int(drop, bools[i], 0) && !J_int(keep, bools[i], 0)) json_set_bool(keep, bools[i], 1);
+  /* 分类：用户手动锁定的不动；否则做并集（扫描来的自动分类也算进去） */
+  if (!J_int(keep, "categoryLocked", 0)) {
+    cJSON *kc = cats_of(keep), *dc = cats_of(drop), *it = NULL;
+    cJSON_ArrayForEach(it, dc) {
+      if (cJSON_IsString(it) && *it->valuestring && !cats_has(kc, it->valuestring))
+        cJSON_AddItemToArray(kc, cJSON_CreateString(it->valuestring));
+    }
+    cJSON_Delete(dc);
+    J_set(keep, "categories", kc);
+    J_set_str(keep, "category", cats_first(kc));
+  }
+  json_set_int(keep, "updatedAt", now_ms());
+}
+
+/* 整理游戏库：① 删掉「平台客户端 / 运行库」这类误入库的 ② 合并重复
+   返回 0 表示没动过；*merged / *cleaned 带回各自数量 */
+static int G_tidy(int *merged, int *cleaned) {
+  int m = 0, c = 0;
+  cJSON *root = G_root();
+  cJSON *list = obj_get(root, "list");
+  if (!cJSON_IsArray(list)) { cJSON_Delete(root); return 0; }
+  /* ① 扫描进来的平台客户端 / 运行库：没玩过、没收藏的直接删 */
+  for (int i = cJSON_GetArraySize(list) - 1; i >= 0; i--) {
+    cJSON *g = cJSON_GetArrayItem(list, i);
+    if (!g) continue;
+    const char *src = J_str(g, "source", "");
+    int from_scan = !strcmp(src, "steam") || !strcmp(src, "epic") ||
+                    !strcmp(src, "registry") || !strcmp(src, "folder");
+    if (!from_scan) continue;
+    if (J_int(g, "playTime", 0) > 0 || J_int(g, "favorite", 0)) continue;
+    if (!is_launcher_or_runtime(J_str(g, "name", ""), J_str(g, "path", ""), J_str(g, "exe", ""))) continue;
+    cJSON_DetachItemFromArray(list, i);
+    cJSON_Delete(g);
+    c++;
+  }
+  /* ② 两两比对合并（每次合并后数组会挪位，重头再扫一遍最省心） */
+  int again = 1;
+  while (again) {
+    again = 0;
+    int n = cJSON_GetArraySize(list);
+    for (int i = 0; i < n && !again; i++) {
+      cJSON *a = cJSON_GetArrayItem(list, i);
+      if (!a) continue;
+      for (int j = i + 1; j < n; j++) {
+        cJSON *b = cJSON_GetArrayItem(list, j);
+        if (!b || !same_game(a, b)) continue;
+        cJSON *keep = a, *drop = b;
+        if (score_record(b) > score_record(a)) { keep = b; drop = a; }
+        G_merge_into(keep, drop);
+        cJSON_DetachItemViaPointer(list, drop);
+        cJSON_Delete(drop);
+        m++;
+        again = 1;
+        break;
+      }
+    }
+  }
+  if (m || c) { G_save(root); G_emit("tidy", ""); }
+  cJSON_Delete(root);
+  if (merged) *merged = m;
+  if (cleaned) *cleaned = c;
+  return m || c;
+}
+
 static cJSON *G_add(cJSON *in, int *is_new) {
   cJSON *root = G_root();
   cJSON *list = obj_get(root, "list");
   cJSON *rec = G_normalize(in);
+  /* 扫描来源里的平台客户端 / 运行库不入库（手动添加不受影响：source 为空或 manual） */
+  {
+    const char *src = J_str(rec, "source", "");
+    if (*src && strcmp(src, "manual") &&
+        is_launcher_or_runtime(J_str(rec, "name", ""), J_str(rec, "path", ""), J_str(rec, "exe", ""))) {
+      cJSON_Delete(rec);
+      cJSON_Delete(root);
+      if (is_new) *is_new = 0;
+      return NULL;
+    }
+  }
   char *key = dedupe_key(rec);
   cJSON *dup = NULL;
   cJSON *it = NULL;
   cJSON_ArrayForEach(it, list) {
     char *k = dedupe_key(it);
-    if (!strcmp(k, key)) { dup = it; free(k); break; }
+    int same = !strcmp(k, key);
     free(k);
+    if (!same) same = same_game(it, rec);
+    if (same) { dup = it; break; }
   }
   free(key);
   if (dup) {
-    const char *fill[] = { "cover", "coverLocal", "exe", "launch", "publisher", "version", "uninstallString", "installDate", "appid" };
-    for (int i = 0; i < (int)(sizeof(fill) / sizeof(fill[0])); i++) {
-      if (!J_str(dup, fill[i], "")[0] && J_str(rec, fill[i], "")[0]) J_set_str(dup, fill[i], J_str(rec, fill[i], ""));
-    }
-    cJSON *dc = cats_of(dup);
-    if (!J_int(dup, "categoryLocked", 0) && !cJSON_GetArraySize(dc)) {
-      J_set(dup, "categories", cJSON_Duplicate(obj_get(rec, "categories"), 1));
-      J_set_str(dup, "category", J_str(rec, "category", "未分类"));
-    }
-    cJSON_Delete(dc);
-    json_set_int(dup, "updatedAt", now_ms());
+    G_merge_into(dup, rec);
+    cJSON_Delete(rec);
     G_save(root);
     G_emit("merge", J_str(dup, "id", ""));
     cJSON *g = G_decorate(dup);
@@ -1519,6 +1737,8 @@ static cJSON *scan_steam(cJSON **out_roots) {
           if ((p = strstr(txt, "\"name\""))) sscanf(p + 6, " \"%511[^\"]\"", name);
           if ((p = strstr(txt, "\"installdir\""))) sscanf(p + 13, " \"%511[^\"]\"", instdir);
           if (*appid && *instdir) {
+            /* Steamworks 运行库 / SteamVR / Linux Runtime 不是游戏 */
+            if (steam_appid_skip(appid) || is_launcher_or_runtime(name, instdir, NULL)) { free(txt); free(file); free(fname); continue; }
             char *common = path_join(apps, "common");
             char *path = path_join(common, instdir);
             free(common);
@@ -2162,6 +2382,8 @@ static cJSON *scan_registry(void) {
         }
         if (!exe && !*lp) { free(n); free(lp); continue; }
         char *pp = w_to_u8(pub); char *vv = w_to_u8(ver); char *uu = w_to_u8(unins); char *ii = w_to_u8(idate);
+        /* 暴雪战网 / Steam / Epic 启动器这类平台客户端，不是游戏 */
+        if (is_launcher_or_runtime(n, lp, exe)) { free(n); free(lp); free(pp); free(vv); free(uu); free(ii); free(exe); continue; }
         if (score_registry(n, lp, pp, uu) < 4) { free(n); free(lp); free(pp); free(vv); free(uu); free(ii); free(exe); continue; }
         cJSON *o = cJSON_CreateObject();
         cJSON_AddStringToObject(o, "name", n);
@@ -2201,7 +2423,7 @@ static cJSON *scan_epic(void) {
         const char *loc = J_str(j, "InstallLocation", "");
         const char *le = J_str(j, "LaunchExecutable", "");
         const char *app = J_str(j, "AppName", "");
-        if (*dn && *loc && path_exists(loc)) {
+        if (*dn && *loc && path_exists(loc) && !is_launcher_or_runtime(dn, loc, le)) {
           cJSON *o = cJSON_CreateObject();
           cJSON_AddStringToObject(o, "name", dn);
           cJSON_AddStringToObject(o, "path", loc);
@@ -2296,6 +2518,13 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
   /* ---- 列表 / CRUD ---- */
   if (is_switch(channel, "games:list")) {
     res = G_list(mod_arg_obj(args, 0));
+  } else if (is_switch(channel, "games:tidy")) {
+    /* 整理游戏库：清掉误入库的平台客户端/运行库，合并重复条目 */
+    int m = 0, c = 0;
+    G_tidy(&m, &c);
+    res = cJSON_CreateObject();
+    cJSON_AddNumberToObject(res, "merged", m);
+    cJSON_AddNumberToObject(res, "cleaned", c);
   } else if (is_switch(channel, "games:hiddenList")) {
     cJSON *o = cJSON_CreateObject();
     cJSON_AddStringToObject(o, "view", "hidden");
@@ -2614,7 +2843,11 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
     res = cJSON_CreateObject();
     cJSON_AddNumberToObject(res, "count", count);
   } else if (is_switch(channel, "games:scan") || is_switch(channel, "games:scanCandidates")) {
-    /* 扫描：Steam + Epic + 注册表 + 常见目录 */
+    /* 扫描：Steam + Epic + 注册表 + 常见目录
+       🔴 先整理旧库：以前版本会把 Steam 清单和目录扫描各存一份（同一款两套 dedupe 键），
+          还会把「暴雪战网 / Steamworks Common」这些平台与运行库当成游戏。 */
+    int merged0 = 0, cleaned0 = 0;
+    G_tidy(&merged0, &cleaned0);
     mod_emit_json("games:scan-progress", "{\"phase\":\"steam\",\"name\":\"正在读取 Steam 库…\"}");
     cJSON *roots = NULL;
     cJSON *st = scan_steam(&roots);
@@ -2648,6 +2881,7 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
           if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..") || !strcmp(nm, "steamapps")) { free(nm); continue; }
           char *dir = path_join(rootp, nm);
           char *exe = main_exe_in(dir, nm, 0);
+          if (exe && is_launcher_or_runtime(nm, dir, exe)) { free(exe); exe = NULL; }
           if (exe) {
             cJSON *o = cJSON_CreateObject();
             cJSON_AddStringToObject(o, "name", nm);
@@ -2680,6 +2914,9 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
       cJSON *g = G_add(it, &isnew);
       if (g) { if (isnew) added++; cJSON_Delete(g); }
     }
+    /* 新进来的若和旧的撞了（名字相同但目录写法不同），再整一遍 */
+    int merged1 = 0, cleaned1 = 0;
+    G_tidy(&merged1, &cleaned1);
     int after = 0;
     {
       cJSON *r = G_root();
@@ -2692,6 +2929,8 @@ static int games_invoke(const char *channel, const char *args_json, char **out_j
     cJSON_AddNumberToObject(o, "registry", cr);
     cJSON_AddNumberToObject(o, "folder", cf);
     cJSON_AddNumberToObject(o, "added", added);
+    cJSON_AddNumberToObject(o, "merged", merged0 + merged1);
+    cJSON_AddNumberToObject(o, "cleaned", cleaned0 + cleaned1);
     cJSON_AddNumberToObject(o, "total", after);
     cJSON_AddItemToObject(o, "list", cJSON_Duplicate(all, 1));
     cJSON_AddItemToObject(o, "steamRoots", roots ? roots : cJSON_CreateArray());

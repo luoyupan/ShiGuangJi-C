@@ -1792,8 +1792,12 @@ const GamesView = {
     off();
     if (res) {
       window.Shell.status('');
+      const extra = [];
+      if (res.merged) extra.push(`合并重复 ${res.merged} 款`);
+      if (res.cleaned) extra.push(`清理平台/运行库 ${res.cleaned} 项`);
       window.Shell.toast(
-        `扫描完成：Steam ${res.steam} · Epic ${res.epic} · 注册表 ${res.registry || 0} · 文件夹 ${res.folder}，新增 ${res.added} 款`,
+        `扫描完成：Steam ${res.steam} · Epic ${res.epic} · 注册表 ${res.registry || 0} · 文件夹 ${res.folder}，新增 ${res.added} 款` +
+        (extra.length ? '，' + extra.join('，') : ''),
         'ok');
     }
     this.page = 'library';
