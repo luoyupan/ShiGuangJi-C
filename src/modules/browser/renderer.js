@@ -47,6 +47,8 @@
 .br2-seg{display:flex;gap:6px;padding:10px 12px 0}
 .br2-seg button{flex:1;border:1px solid var(--border);background:transparent;color:var(--text-dim);border-radius:8px;padding:6px;cursor:pointer}
 .br2-seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.br2-seg .x{flex:0 0 auto;width:34px;display:grid;place-items:center}
+.br2-bar .btn-ic.on{color:var(--accent);border-color:var(--accent);background:var(--accent-soft)}
 .br2-empty{padding:20px;color:var(--text-dim);font-size:.86em;text-align:center}
 `;
     document.head.appendChild(s);
@@ -89,7 +91,7 @@
       });
       bar.appendChild(el('div', { class: 'br2-addr' }, icon('search'), this.addr));
       this.btnStar = el('button', { class: 'btn-ic', title: '收藏这一页', onclick: () => this.toggleBookmark() }, icon('star'));
-      this.btnSide = el('button', { class: 'btn-ic', title: '书签 / 历史', onclick: () => this.togglePanel(this.panel === 'bm' ? 'hist' : 'bm') }, icon('folder'));
+      this.btnSide = el('button', { class: 'btn-ic', title: '书签 / 历史（再点一次收起）', onclick: () => this.togglePanel(this.panel ? '' : 'bm') }, icon('folder'));
       bar.appendChild(this.btnStar); bar.appendChild(this.btnSide);
       page.appendChild(bar);
 
@@ -108,6 +110,12 @@
       this.renderTabs();
       this.timer = setInterval(() => this.syncBounds(), 500);
       API.on('browser:state', (s) => this.onState(s));
+      /* 网页里点开的新窗口（target=_blank）→ 宿主发事件，这里开新标签页 */
+      API.on('browser:newtab', (s) => { if (s && s.url) this.newTabTo(s.url); });
+      /* Esc 收起侧栏（地址栏里的 Esc 另有用途，跳过） */
+      window.addEventListener('keydown', this._onKey = (e) => {
+        if (e.key === 'Escape' && this.panel && e.target !== this.addr) this.togglePanel('');
+      });
       window.addEventListener('resize', this._onResize = () => this.syncBounds());
     },
 
@@ -130,6 +138,12 @@
     },
     newTab() {
       this.tabs.push({ id: Date.now(), url: this.settings.home || 'https://www.bing.com/', title: '新标签页' });
+      this.switchTab(this.tabs.length - 1);
+    },
+    /* 新标签页打开一个网址：搜索、书签、历史、网页点开的新窗口都走这里 */
+    newTabTo(url) {
+      if (!url) return;
+      this.tabs.push({ id: Date.now(), url, title: url });
       this.switchTab(this.tabs.length - 1);
     },
     closeTab(i) {
@@ -171,8 +185,9 @@
     submit() {
       const text = this.addr.value.trim();
       if (!text) return;
+      /* 搜索 / 输网址：开新标签页，不覆盖当前页 */
       SGJ.browser.resolveInput(text, this.settings.engine).then((r) => {
-        if (r && r.url) this.go(r.url);
+        if (r && r.url) this.newTabTo(r.url);
       }).catch((e) => window.Shell.toast(e.message, 'err'));
     },
     go(url) {
@@ -201,6 +216,7 @@
       if (this.panel === which) which = '';
       this.panel = which;
       this.sideEl.hidden = !which;
+      if (this.btnSide) this.btnSide.classList.toggle('on', !!which);
       if (which) this.renderPanel();
       setTimeout(() => this.syncBounds(), 50);
     },
@@ -208,17 +224,18 @@
       clear(this.sideEl);
       this.sideEl.appendChild(el('div', { class: 'br2-seg' },
         el('button', { class: this.panel === 'bm' ? 'on' : '', onclick: () => { this.panel = 'bm'; this.renderPanel(); } }, '书签'),
-        el('button', { class: this.panel === 'hist' ? 'on' : '', onclick: () => { this.panel = 'hist'; this.renderPanel(); API.raw.browser.history({ limit: 120 }).then((h) => { this.hist = h || []; this.renderPanel(); }); } }, '历史')));
+        el('button', { class: this.panel === 'hist' ? 'on' : '', onclick: () => { this.panel = 'hist'; this.renderPanel(); API.raw.browser.history({ limit: 120 }).then((h) => { this.hist = h || []; this.renderPanel(); }); } }, '历史'),
+        el('button', { class: 'x', title: '收起', onclick: () => this.togglePanel('') }, icon('close'))));
       const list = el('div', { class: 'br2-list' });
       if (this.panel === 'bm') {
         if (!this.bms.length) list.appendChild(el('div', { class: 'br2-empty', text: '还没有书签。点地址栏右边的星星收藏当前页。' }));
-        this.bms.forEach((b) => list.appendChild(el('div', { class: 'br2-item', onclick: () => this.go(b.url) },
+        this.bms.forEach((b) => list.appendChild(el('div', { class: 'br2-item', onclick: () => this.newTabTo(b.url) },
           icon('star'), el('div', { style: { flex: '1', minWidth: '0' } },
             el('div', { class: 'u', style: { color: 'var(--text)' }, text: b.title || b.url }),
             el('div', { class: 'u', text: b.url })))));
       } else {
         if (!this.hist.length) list.appendChild(el('div', { class: 'br2-empty', text: '还没有浏览记录。' }));
-        this.hist.forEach((h) => list.appendChild(el('div', { class: 'br2-item', onclick: () => this.go(h.url) },
+        this.hist.forEach((h) => list.appendChild(el('div', { class: 'br2-item', onclick: () => this.newTabTo(h.url) },
           icon('clock'), el('div', { style: { flex: '1', minWidth: '0' } },
             el('div', { class: 'u', style: { color: 'var(--text)' }, text: h.title || h.url }),
             el('div', { class: 'u', text: h.url })))));
@@ -229,6 +246,7 @@
     detach() {
       if (this.timer) { clearInterval(this.timer); this.timer = null; }
       if (this._onResize) { window.removeEventListener('resize', this._onResize); this._onResize = null; }
+      if (this._onKey) { window.removeEventListener('keydown', this._onKey); this._onKey = null; }
       if (window.SGJ && SGJ.__call) SGJ.__call('browser:viewHide').catch(() => {});
       this.stage = null;
     }

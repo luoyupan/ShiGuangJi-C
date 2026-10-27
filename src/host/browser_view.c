@@ -1,7 +1,10 @@
 #include "browser_view.h"
 #include "webview.h"
+#include "dialogs.h"
+#include "store.h"
 #include <WebView2.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #pragma comment(lib, "ole32.lib")
 
@@ -73,15 +76,148 @@ static ULONG STDMETHODCALLTYPE Nw_Release(ICoreWebView2NewWindowRequestedEventHa
 static HRESULT STDMETHODCALLTYPE Nw_Invoke(ICoreWebView2NewWindowRequestedEventHandler *T, ICoreWebView2 *s, ICoreWebView2NewWindowRequestedEventArgs *a) {
   (void)T; (void)s;
   if (!a) return S_OK;
+  /* 网页里点开的新窗口（target=_blank / window.open）：不在当前页覆盖，
+     发事件给界面，由它开一个新标签页 */
   LPWSTR uri = NULL;
   a->lpVtbl->get_Uri(a, &uri);
-  if (uri && g_wv) g_wv->lpVtbl->Navigate(g_wv, uri);
-  if (uri) CoTaskMemFree(uri);
+  if (uri) {
+    char *u8 = w_to_u8(uri);
+    cJSON *o = cJSON_CreateObject();
+    cJSON_AddStringToObject(o, "url", u8 ? u8 : "");
+    bus_emit("browser:newtab", o);
+    free(u8);
+    CoTaskMemFree(uri);
+  }
   a->lpVtbl->put_Handled(a, TRUE);
   return S_OK;
 }
 static ICoreWebView2NewWindowRequestedEventHandlerVtbl g_nwVtbl = { Nw_QI, Nw_AddRef, Nw_Release, Nw_Invoke };
 static NwCb g_nw = { &g_nwVtbl, 1 };
+
+/* ---------- 下载：接管 DownloadStarting ----------
+   🔴 不接管的话 WebView2 用它自己的默认行为，我们控制不了保存位置。
+   现在每次下载弹「另存为」，对话框从**上次用过的文件夹**打开；
+   确认后记住那个文件夹，下次还从那儿开始。取消 = 放弃这次下载。 */
+typedef struct { ICoreWebView2DownloadStartingEventHandlerVtbl *lpVtbl; LONG ref; } DlCb;
+static HRESULT STDMETHODCALLTYPE Dl_QI(ICoreWebView2DownloadStartingEventHandler *T, REFIID riid, void **ppv) { *ppv = T; return S_OK; }
+static ULONG STDMETHODCALLTYPE Dl_AddRef(ICoreWebView2DownloadStartingEventHandler *T) { return InterlockedIncrement(&((DlCb *)T)->ref); }
+static ULONG STDMETHODCALLTYPE Dl_Release(ICoreWebView2DownloadStartingEventHandler *T) { return InterlockedDecrement(&((DlCb *)T)->ref); }
+
+/* 从 Content-Disposition / URI 里猜一个像样的文件名（SDK 这版没有 SuggestedFileName） */
+static void suggest_name(ICoreWebView2DownloadOperation *op, wchar_t *out, size_t cap) {
+  wchar_t *cd = NULL, *uri = NULL;
+  if (op) op->lpVtbl->get_ContentDisposition(op, &cd);
+  if (op && (!cd || !*cd)) op->lpVtbl->get_Uri(op, &uri);
+  const wchar_t *src = NULL;
+  if (cd && *cd) {
+    /* filename="xxx.mp4"; filename*=UTF-8''xxx —— 两种都容忍 */
+    const wchar_t *f = cd;
+    const wchar_t *star = wcsstr(f, L"filename*=");
+    const wchar_t *plain = wcsstr(f, L"filename=");
+    if (star && (!plain || star < plain)) {
+      f = star + 10;
+      const wchar_t *q = wcschr(f, L'\'');            /* UTF-8''名字 —— 取最后一段引号之后 */
+      if (q) f = q + 1;
+      if (*f == L'\'') f++;                            /* 第二个引号 */
+    } else if (plain) {
+      f = plain + 9;
+    }
+    while (*f == L' ' || *f == L'"') f++;
+    src = f;
+  } else if (uri && *uri) {
+    src = uri;
+  }
+  if (src) {
+    /* 截到引号 / 分号 / 问号（查询串）/ 斜杠（取最后一段）为止 */
+    wchar_t tmp[MAX_PATH * 2];
+    size_t k = 0;
+    for (const wchar_t *p = src; *p && k + 1 < sizeof(tmp) / sizeof(tmp[0]); p++) {
+      if (*p == L'"' || *p == L';' || *p == L'?' || *p == L'#') break;
+      tmp[k++] = *p;
+    }
+    tmp[k] = 0;
+    const wchar_t *base = wcsrchr(tmp, L'/');
+    const wchar_t *q = wcsrchr(tmp, L'\\');
+    if (q && (!base || q > base)) base = q;
+    base = base ? base + 1 : tmp;
+    /* URL 编码的字符先解一层（%E8%A7%86 → 中文） */
+    char *u8 = w_to_u8(base);
+    if (u8) {
+      char *dec = url_decode(u8);
+      free(u8);
+      if (dec && *dec) {
+        for (char *p = dec; *p; p++) if (strchr("\\/:*?\"<>|", *p)) *p = '_';
+        wchar_t *w = u8_to_w(dec);
+        free(dec);
+        if (w) { wcsncpy(out, w, cap - 1); out[cap - 1] = 0; free(w); return; }
+      } else free(dec);
+    }
+    wcsncpy(out, base, cap - 1); out[cap - 1] = 0;
+    for (wchar_t *p = out; *p; p++) if (wcschr(L"\\/:*?\"<>|", *p)) *p = L'_';
+    return;
+  }
+  wcsncpy(out, L"下载文件", cap - 1);
+  out[cap - 1] = 0;
+}
+
+/* 系统下载文件夹（这套 SDK 没有 CSIDL_DOWNLOADS，走 Known Folder） */
+static char *downloads_dir(void) {
+  PWSTR p = NULL;
+  if (SUCCEEDED(SHGetKnownFolderPath(&FOLDERID_Downloads, 0, NULL, &p))) {
+    char *u = w_to_u8(p);
+    CoTaskMemFree(p);
+    return u ? u : xstrdup("");
+  }
+  return xstrdup("");
+}
+
+static HRESULT STDMETHODCALLTYPE Dl_Invoke(ICoreWebView2DownloadStartingEventHandler *T, ICoreWebView2 *s, ICoreWebView2DownloadStartingEventArgs *a) {
+  (void)T; (void)s;
+  if (!a) return S_OK;
+  /* 默认起点：上次下载用的文件夹 > 系统下载文件夹 */
+  char last[MAX_PATH * 2] = "";
+  cJSON *cfg = store_get("browserDownload");
+  if (cfg) {
+    const char *d = json_str(cfg, "dir", "");
+    if (d && *d) snprintf(last, sizeof(last), "%s", d);
+    cJSON_Delete(cfg);
+  }
+  if (!last[0]) {
+    char *dl = downloads_dir();
+    snprintf(last, sizeof(last), "%s", (dl && *dl) ? dl : ".");
+    free(dl);
+  }
+  wchar_t suggest[MAX_PATH * 2];
+  suggest[0] = 0;
+  ICoreWebView2DownloadOperation *op = NULL;
+  if (SUCCEEDED(a->lpVtbl->get_DownloadOperation(a, &op)) && op) {
+    suggest_name(op, suggest, sizeof(suggest) / sizeof(suggest[0]));
+    op->lpVtbl->Release(op);
+  }
+  if (!suggest[0]) { wcsncpy(suggest, L"下载文件", 15); suggest[15] = 0; }
+  char *nm8 = w_to_u8(suggest);
+  char *picked = dlg_save_at(g_parent, "保存下载文件", NULL, nm8 ? nm8 : "", last);
+  free(nm8);
+  if (!picked || !*picked) {           /* 用户取消 = 不要这次下载 */
+    a->lpVtbl->put_Cancel(a, TRUE);
+    free(picked);
+    return S_OK;
+  }
+  cJSON *save = cJSON_CreateObject();  /* 记住文件夹，下次对话框从这里打开 */
+  char *dirp = path_dirname(picked);
+  cJSON_AddStringToObject(save, "dir", dirp ? dirp : "");
+  free(dirp);
+  store_set("browserDownload", save);
+  cJSON_Delete(save);
+  wchar_t *wp = u8_to_w(picked);
+  if (wp) a->lpVtbl->put_ResultFilePath(a, wp);
+  free(wp);
+  a->lpVtbl->put_Handled(a, TRUE);
+  free(picked);
+  return S_OK;
+}
+static ICoreWebView2DownloadStartingEventHandlerVtbl g_dlVtbl = { Dl_QI, Dl_AddRef, Dl_Release, Dl_Invoke };
+static DlCb g_dl = { &g_dlVtbl, 1 };
 
 /* ---------- Cookie 抓取（音乐 / 网盘登录复用浏览器登录态） ---------- */
 typedef struct CookieReq {
@@ -168,6 +304,12 @@ static HRESULT STDMETHODCALLTYPE BCtrl_Invoke(ICoreWebView2CreateCoreWebView2Con
     g_wv->lpVtbl->add_NavigationCompleted(g_wv, (ICoreWebView2NavigationCompletedEventHandler *)&g_nav, NULL);
     g_wv->lpVtbl->add_DocumentTitleChanged(g_wv, (ICoreWebView2DocumentTitleChangedEventHandler *)&g_title, NULL);
     g_wv->lpVtbl->add_NewWindowRequested(g_wv, (ICoreWebView2NewWindowRequestedEventHandler *)&g_nw, NULL);
+    /* 下载要走 ICoreWebView2_4 的 DownloadStarting（默认行为记不住文件夹） */
+    ICoreWebView2_4 *w4 = NULL;
+    if (SUCCEEDED(g_wv->lpVtbl->QueryInterface(g_wv, &IID_ICoreWebView2_4, (void **)&w4)) && w4) {
+      w4->lpVtbl->add_DownloadStarting(w4, (ICoreWebView2DownloadStartingEventHandler *)&g_dl, NULL);
+      w4->lpVtbl->Release(w4);
+    }
     ICoreWebView2Settings *st = NULL;
     if (SUCCEEDED(g_wv->lpVtbl->get_Settings(g_wv, &st)) && st) {
       st->lpVtbl->put_IsStatusBarEnabled(st, FALSE);

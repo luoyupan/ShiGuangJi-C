@@ -78,6 +78,41 @@ char *dlg_pick_folder(HWND owner, int multi, const char *title) {
   return buf_take(&b);
 }
 
+char *dlg_save_at(HWND owner, const char *title, const char *pattern,
+                  const char *default_name, const char *initial_dir) {
+  ensure_com();
+  IFileSaveDialog *dlg = NULL;
+  if (FAILED(CoCreateInstance(&CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER, &IID_IFileSaveDialog, (void **)&dlg)))
+    return xstrdup("");
+  COMDLG_FILTERSPEC spec;
+  wchar_t patbuf[512];
+  make_filter(pattern, &spec, patbuf, 512);
+  dlg->lpVtbl->SetFileTypes(dlg, 1, &spec);
+  if (title && *title) { wchar_t *wt = u8_to_w(title); dlg->lpVtbl->SetTitle(dlg, wt); free(wt); }
+  if (default_name && *default_name) { wchar_t *wn = u8_to_w(default_name); dlg->lpVtbl->SetFileName(dlg, wn); free(wn); }
+  /* 初始目录：上次下载到的地方（不存在就不管，让系统自己挑） */
+  if (initial_dir && *initial_dir && path_is_dir(initial_dir)) {
+    wchar_t *wi = u8_to_w(initial_dir);
+    IShellItem *it = NULL;
+    if (SUCCEEDED(SHCreateItemFromParsingName(wi, NULL, &IID_IShellItem, (void **)&it)) && it) {
+      dlg->lpVtbl->SetFolder(dlg, it);
+      it->lpVtbl->Release(it);
+    }
+    free(wi);
+  }
+  char *out = xstrdup("");
+  if (SUCCEEDED(dlg->lpVtbl->Show(dlg, owner))) {
+    IShellItem *it = NULL;
+    if (SUCCEEDED(dlg->lpVtbl->GetResult(dlg, &it)) && it) {
+      char *p = item_path(it);
+      if (p) { free(out); out = p; }
+      it->lpVtbl->Release(it);
+    }
+  }
+  dlg->lpVtbl->Release(dlg);
+  return out;
+}
+
 char *dlg_pick_files(HWND owner, int save, const char *title, const char *pattern, const char *default_name) {
   ensure_com();
   if (save) {
