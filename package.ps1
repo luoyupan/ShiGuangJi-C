@@ -1,9 +1,9 @@
-﻿# Build a clean distributable folder: dist\ShiGuangJi-1.1.0
+﻿# Build a clean distributable folder: dist\ShiGuangJi-1.1.1
 param([switch]$SkipBuild)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$ver = "1.1.0"
+$ver = "1.1.1"
 $distRoot = Join-Path $root "dist"
 $dist = Join-Path $distRoot "ShiGuangJi-$ver"
 

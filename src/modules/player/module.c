@@ -37,6 +37,11 @@ static cJSON *P_state(void) {
     cJSON_DeleteItemFromObjectCaseSensitive(st, "recent");
     cJSON_AddItemToObject(st, "recent", cJSON_CreateArray());
   }
+  /* 视频库的文件夹（照片模块那套「左栏文件夹 + 右栏网格」的播放器版本） */
+  if (!cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(st, "roots"))) {
+    cJSON_DeleteItemFromObjectCaseSensitive(st, "roots");
+    cJSON_AddItemToObject(st, "roots", cJSON_CreateArray());
+  }
   if (!cJSON_IsArray(cJSON_GetObjectItemCaseSensitive(st, "playlist"))) {
     cJSON_DeleteItemFromObjectCaseSensitive(st, "playlist");
     cJSON_AddItemToObject(st, "playlist", cJSON_CreateArray());
@@ -522,6 +527,76 @@ static cJSON *do_scan(const char *dir, int *truncated, int *count) {
   return arr;
 }
 
+/* 「影片库」历史记录上限。30 条太少（一个剧集就占满了），100 条 JSON 也就几十 KB。 */
+#define P_RECENT_MAX 100
+
+/* 把 path 插到 recent 最前面（同路径先去重）。
+   mark（真播过）和 libTouch（加进过列表）共用 —— 两处各写一遍的话，去重规则迟早走岔。 */
+static void recent_touch(cJSON *recent, const char *p) {
+  if (!cJSON_IsArray(recent) || !p || !*p) return;
+  for (int i = cJSON_GetArraySize(recent) - 1; i >= 0; i--) {
+    cJSON *it = cJSON_GetArrayItem(recent, i);
+    if (it && !strcmp(json_str(it, "path", ""), p)) cJSON_DeleteItemFromArray(recent, i);
+  }
+  cJSON *e = cJSON_CreateObject();
+  cJSON_AddStringToObject(e, "path", p);
+  cJSON_AddStringToObject(e, "name", path_basename(p));
+  cJSON_AddNumberToObject(e, "at", (double)now_sec());
+  cJSON_InsertItemInArray(recent, 0, e);
+  while (cJSON_GetArraySize(recent) > P_RECENT_MAX)
+    cJSON_DeleteItemFromArray(recent, cJSON_GetArraySize(recent) - 1);
+}
+
+/* 把一个文件夹加进 roots（同路径先删再加，等于「置底更新」） */
+static void roots_add(cJSON *st, const char *dir) {
+  cJSON *roots = cJSON_GetObjectItemCaseSensitive(st, "roots");
+  if (!cJSON_IsArray(roots) || !dir || !*dir) return;
+  for (int i = cJSON_GetArraySize(roots) - 1; i >= 0; i--) {
+    cJSON *it = cJSON_GetArrayItem(roots, i);
+    if (cJSON_IsString(it) && it->valuestring && !_stricmp(it->valuestring, dir))
+      cJSON_DeleteItemFromArray(roots, i);
+  }
+  cJSON_AddItemToArray(roots, cJSON_CreateString(dir));
+}
+
+/* 路径小写化到一个栈缓冲里（roots 合并去重时的键） */
+static void lower_key(char *dst, size_t cap, const char *p) {
+  size_t i = 0;
+  if (!cap) return;
+  for (; p && p[i] && i + 1 < cap; i++) dst[i] = (char)tolower((unsigned char)p[i]);
+  dst[i] = 0;
+}
+
+/* 扫所有 roots → 合并去重后的 items。truncated 表示有目录超过 3000 条上限。 */
+static cJSON *scan_roots(cJSON *roots, int *total, int *truncated) {
+  cJSON *items = cJSON_CreateArray();
+  cJSON *seen = cJSON_CreateObject();
+  int n = 0, trunc = 0;
+  cJSON *r = NULL;
+  cJSON_ArrayForEach(r, roots) {
+    if (!cJSON_IsString(r) || !r->valuestring || !*r->valuestring) continue;
+    int tr = 0, cnt = 0;
+    cJSON *one = do_scan(r->valuestring, &tr, &cnt);
+    if (!one) continue;
+    trunc |= tr;
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, one) {
+      char key[1024];
+      lower_key(key, sizeof(key), json_str(it, "path", ""));
+      if (!*key) continue;
+      if (cJSON_GetObjectItemCaseSensitive(seen, key)) continue;  /* 两个 root 覆盖同一文件 */
+      cJSON_AddBoolToObject(seen, key, 1);
+      cJSON *dup = cJSON_Duplicate(it, 1);
+      if (dup) { cJSON_AddItemToArray(items, dup); n++; }
+    }
+    cJSON_Delete(one);
+  }
+  cJSON_Delete(seen);
+  if (total) *total = n;
+  if (truncated) *truncated = trunc;
+  return items;
+}
+
 static int player_invoke(const char *channel, const char *args_json, char **out_json, char **out_error) {
   cJSON *args = mod_parse_args(args_json);
   cJSON *res = NULL;
@@ -569,6 +644,79 @@ static int player_invoke(const char *channel, const char *args_json, char **out_
     cJSON_AddNumberToObject(res, "count", cnt);
     json_set_bool(res, "truncated", tr);
     free(dir);
+  } else if (!strcmp(channel, "player:roots")) {
+    /* 视频库主界面：左栏文件夹 + 右栏网格。一次把 roots 和扫出来的 items 都给界面，
+       省得界面为每个文件夹各发一次 IPC（几百个文件往返一次就够了）。 */
+    cJSON *st = P_state();
+    cJSON *roots = cJSON_GetObjectItemCaseSensitive(st, "roots");
+    res = cJSON_CreateObject();
+    cJSON_AddItemToObject(res, "roots", cJSON_Duplicate(roots, 1));
+    int total = 0, trunc = 0;
+    cJSON_AddItemToObject(res, "items", scan_roots(roots, &total, &trunc));
+    cJSON_AddNumberToObject(res, "total", total);
+    json_set_bool(res, "truncated", trunc);
+    cJSON_Delete(st);
+  } else if (!strcmp(channel, "player:addRoot")) {
+    /* 不走对话框直接加一个目录（界面已有的目录再确认 / 以后要支持的拖文件夹进来） */
+    const char *d = mod_arg_str(args, 0, "");
+    if (!*d) { rc = -1; *out_error = mod_ret_error("缺文件夹路径"); goto done; }
+    cJSON *st = P_state();
+    roots_add(st, d);
+    P_save(st);
+    cJSON_Delete(st);
+    cJSON *st2 = P_state();
+    cJSON *roots = cJSON_GetObjectItemCaseSensitive(st2, "roots");
+    res = cJSON_CreateObject();
+    cJSON_AddStringToObject(res, "dir", d);
+    cJSON_AddItemToObject(res, "roots", cJSON_Duplicate(roots, 1));
+    int total = 0, trunc = 0;
+    cJSON_AddItemToObject(res, "items", scan_roots(roots, &total, &trunc));
+    cJSON_AddNumberToObject(res, "total", total);
+    json_set_bool(res, "truncated", trunc);
+    cJSON_Delete(st2);
+  } else if (!strcmp(channel, "player:pickRoot")) {
+    /* 左栏「添加文件夹」：选一个目录 → 记进 roots → 直接返回最新的一份库 */
+    char *d = g_host->pick_folder(0, "选择放视频的文件夹");
+    if (!d || !*d) {
+      if (d) g_host->dealloc(d);
+      res = cJSON_CreateNull();
+    } else {
+      cJSON *st = P_state();
+      roots_add(st, d);
+      cJSON *s = P_settings(st);
+      cJSON_DeleteItemFromObjectCaseSensitive(s, "lastDir");
+      cJSON_AddStringToObject(s, "lastDir", d);
+      P_save(st);
+      cJSON_Delete(st);
+      cJSON *st2 = P_state();
+      cJSON *roots = cJSON_GetObjectItemCaseSensitive(st2, "roots");
+      res = cJSON_CreateObject();
+      cJSON_AddStringToObject(res, "dir", d);
+      cJSON_AddItemToObject(res, "roots", cJSON_Duplicate(roots, 1));
+      int total = 0, trunc = 0;
+      cJSON_AddItemToObject(res, "items", scan_roots(roots, &total, &trunc));
+      cJSON_AddNumberToObject(res, "total", total);
+      json_set_bool(res, "truncated", trunc);
+      cJSON_Delete(st2);
+      g_host->dealloc(d);
+    }
+  } else if (!strcmp(channel, "player:removeRoot")) {
+    const char *d = mod_arg_str(args, 0, "");
+    int removed = 0;
+    if (*d) {
+      cJSON *st = P_state();
+      cJSON *roots = cJSON_GetObjectItemCaseSensitive(st, "roots");
+      for (int i = cJSON_GetArraySize(roots) - 1; i >= 0; i--) {
+        cJSON *it = cJSON_GetArrayItem(roots, i);
+        if (cJSON_IsString(it) && it->valuestring && !_stricmp(it->valuestring, d)) {
+          cJSON_DeleteItemFromArray(roots, i);
+          removed++;
+        }
+      }
+      if (removed) P_save(st);
+      cJSON_Delete(st);
+    }
+    res = cJSON_CreateBool(removed > 0);
   } else if (!strcmp(channel, "player:stat")) {
     const char *p = mod_arg_str(args, 0, "");
     res = cJSON_CreateObject();
@@ -711,24 +859,72 @@ static int player_invoke(const char *channel, const char *args_json, char **out_
     const char *p = mod_arg_str(args, 0, "");
     if (!*p) { rc = -1; *out_error = mod_ret_error("缺路径"); goto done; }
     cJSON *st = P_state();
-    cJSON *recent = cJSON_GetObjectItemCaseSensitive(st, "recent");
-    /* 去重：同一路径只留最新一条 */
-    for (int i = cJSON_GetArraySize(recent) - 1; i >= 0; i--) {
-      cJSON *it = cJSON_GetArrayItem(recent, i);
-      if (it && !strcmp(json_str(it, "path", ""), p)) cJSON_DeleteItemFromArray(recent, i);
+    recent_touch(cJSON_GetObjectItemCaseSensitive(st, "recent"), p);
+    P_save(st);
+    cJSON_Delete(st);
+    res = cJSON_CreateBool(1);
+  } else if (!strcmp(channel, "player:libTouch")) {
+    /* 批量记录「加进过播放列表」的影片（界面点「添加文件 / 添加文件夹」时调）。
+       ⚠️ 必须倒着插：recent_touch 每次都插到头部，正着插最后顺序是反的。 */
+    cJSON *paths = mod_arg_at(args, 0);
+    int n = 0;
+    if (cJSON_IsArray(paths)) {
+      cJSON *st = P_state();
+      cJSON *recent = cJSON_GetObjectItemCaseSensitive(st, "recent");
+      int cnt = cJSON_GetArraySize(paths);
+      for (int i = cnt - 1; i >= 0; i--) {
+        cJSON *p = cJSON_GetArrayItem(paths, i);
+        if (cJSON_IsString(p) && p->valuestring && *p->valuestring) {
+          recent_touch(recent, p->valuestring);
+          n++;
+        }
+      }
+      if (n) P_save(st);
+      cJSON_Delete(st);
     }
-    cJSON *e = cJSON_CreateObject();
-    cJSON_AddStringToObject(e, "path", p);
-    cJSON_AddStringToObject(e, "name", path_basename(p));
-    cJSON_AddNumberToObject(e, "at", (double)now_sec());
-    cJSON_InsertItemInArray(recent, 0, e);
-    while (cJSON_GetArraySize(recent) > 30) cJSON_DeleteItemFromArray(recent, cJSON_GetArraySize(recent) - 1);
+    res = cJSON_CreateNumber(n);
+  } else if (!strcmp(channel, "player:libRemove")) {
+    /* 只从历史记录里划掉，不动文件、不动播放列表 */
+    const char *p = mod_arg_str(args, 0, "");
+    int removed = 0;
+    if (*p) {
+      cJSON *st = P_state();
+      cJSON *recent = cJSON_GetObjectItemCaseSensitive(st, "recent");
+      for (int i = cJSON_GetArraySize(recent) - 1; i >= 0; i--) {
+        cJSON *it = cJSON_GetArrayItem(recent, i);
+        if (it && !strcmp(json_str(it, "path", ""), p)) { cJSON_DeleteItemFromArray(recent, i); removed++; }
+      }
+      if (removed) P_save(st);
+      cJSON_Delete(st);
+    }
+    res = cJSON_CreateBool(removed > 0);
+  } else if (!strcmp(channel, "player:libClear")) {
+    cJSON *st = P_state();
+    cJSON_DeleteItemFromObjectCaseSensitive(st, "recent");
+    cJSON_AddItemToObject(st, "recent", cJSON_CreateArray());
     P_save(st);
     cJSON_Delete(st);
     res = cJSON_CreateBool(1);
   } else if (!strcmp(channel, "player:recent")) {
+    /* 顺带把 progress 里的「看到哪 / 总长」并进来 —— 一次 IPC 拿全，
+       不然界面要为 100 条各自调一次 progress:get。 */
     cJSON *st = P_state();
-    res = cJSON_Duplicate(cJSON_GetObjectItemCaseSensitive(st, "recent"), 1);
+    cJSON *list = cJSON_GetObjectItemCaseSensitive(st, "recent");
+    cJSON *prog = cJSON_GetObjectItemCaseSensitive(st, "progress");
+    res = cJSON_CreateArray();
+    cJSON *it = NULL;
+    cJSON_ArrayForEach(it, list) {
+      cJSON *e = cJSON_Duplicate(it, 1);
+      if (!e) continue;
+      const char *p = json_str(e, "path", "");
+      cJSON *pr = *p ? cJSON_GetObjectItemCaseSensitive(prog, p) : NULL;
+      if (pr) {
+        cJSON_AddNumberToObject(e, "pos", json_num(pr, "pos", 0));
+        cJSON_AddNumberToObject(e, "dur", json_num(pr, "dur", 0));
+        cJSON_AddNumberToObject(e, "watchedAt", json_num(pr, "at", 0));
+      }
+      cJSON_AddItemToArray(res, e);
+    }
     cJSON_Delete(st);
   } else if (!strcmp(channel, "player:reveal")) {
     const char *p = mod_arg_str(args, 0, "");

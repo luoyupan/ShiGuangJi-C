@@ -215,7 +215,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 10px;
+  padding: 6px 10px 0;   /* 底边 padding 交给 tab 的下划线来占 */
   border-bottom: 1px solid var(--border);
   font-size: 12.5px;
   color: var(--text-dim);
@@ -257,6 +257,126 @@
 .pl-item:hover .pl-x { opacity: 1; }
 .pl-x:hover { color: #ff6b6b; background: rgba(255, 107, 107, .12); }
 .pl-empty { padding: 22px 12px; text-align: center; color: var(--text-mute); font-size: 12.5px; }
+.pl-empty-sub { margin-top: 6px; font-size: 11.5px; line-height: 1.7; opacity: .8; }
+
+/* ============================================================
+   库视图（和图片模块一个样子：左栏文件夹 + 右栏网格）
+   外壳 .games / .gside / .gmain / .mods-side-head 直接复用全局样式，
+   这里只写播放器自己的：文件夹条目 / 统计 / 工具行 / 视频卡片。
+   ============================================================ */
+.pl-root { height: 100%; }
+.pl-libview { min-height: 0; }
+
+/* ---------------- 左栏 ---------------- */
+.pv-act { display: flex; gap: 8px; padding: 10px 12px; }
+.pv-act .btn { flex: 1; justify-content: center; }
+.pv-act .btn.is-busy { opacity: .6; }
+
+.pv-root {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  border-radius: 8px; cursor: default;
+}
+.pv-root:hover { background: var(--surface-3, rgba(127,127,127,.08)); }
+.pv-root > svg { width: 16px; height: 16px; flex: 0 0 16px; color: var(--text-mute); }
+.pv-root-m { min-width: 0; flex: 1; }
+.pv-root-n { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-root-s { font-size: 11px; color: var(--text-mute); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-root-x {
+  border: 0; background: transparent; color: var(--text-mute); cursor: pointer;
+  padding: 2px; border-radius: 5px; line-height: 0; opacity: 0; transition: opacity .15s;
+}
+.pv-root:hover .pv-root-x { opacity: 1; }
+.pv-root-x:hover { background: rgba(200,40,40,.14); color: #d33; }
+.pv-root-x svg { width: 13px; height: 13px; }
+
+.pv-side-empty { padding: 18px 12px; }
+.pv-side-empty p { margin: 0; font-size: 12.5px; }
+
+.pv-stat {
+  border-top: 1px solid var(--border); padding: 10px 12px; margin-top: auto;
+  display: flex; flex-direction: column; gap: 5px; font-size: 12px;
+}
+.pv-stat-l { display: flex; align-items: center; gap: 6px; }
+.pv-stat-l b { font-size: 15px; }
+.pv-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: var(--accent); }
+
+/* ---------------- 右栏工具行 ---------------- */
+.pv-bar {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; border-bottom: 1px solid var(--border);
+}
+.pv-tabs { display: flex; gap: 4px; background: var(--surface-2); padding: 3px; border-radius: 9px; flex: 0 0 auto; }
+.pv-tab {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 0; background: transparent; color: var(--text-mute);
+  padding: 6px 12px; border-radius: 7px; cursor: pointer; font-size: 13px;
+}
+.pv-tab svg { width: 15px; height: 15px; }
+.pv-tab.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.pv-bar-right { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; }
+.pv-bar-right > svg { width: 15px; height: 15px; color: var(--text-mute); flex: 0 0 15px; }
+.pv-kw, .pv-sel {
+  background: var(--surface-2); border: 1px solid var(--border);
+  border-radius: 7px; padding: 6px 9px; color: var(--text); font-size: 13px;
+}
+.pv-kw { flex: 1; min-width: 80px; max-width: 260px; }
+.pv-sel { flex: 0 0 auto; }
+
+/* ---------------- 视频网格 ---------------- */
+.pv-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+.pv-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+
+.pv-card {
+  width: 178px; border-radius: 10px; overflow: hidden; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border);
+  position: relative; transition: transform .16s ease, box-shadow .16s ease;
+}
+.pv-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.16); }
+.pv-thumb {
+  position: relative; width: 100%; height: 100px; overflow: hidden;
+  background: #0d0f13; display: flex; align-items: center; justify-content: center;
+}
+/* 内联 svg 没有宽高会按 100% 撑满 —— 必须显式给尺寸 */
+.pv-thumb img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s; }
+.pv-thumb img.on { opacity: 1; }
+.pv-thumb img.bad { opacity: 0; }
+.pv-play {
+  position: absolute; width: 30px; height: 30px; border-radius: 50%;
+  display: grid; place-items: center; pointer-events: none;
+  background: rgba(0,0,0,.46); color: #fff;
+}
+.pv-play svg { width: 13px; height: 13px; }
+/* 有封面以后播放标只留一点点存在感，别糊在画面正中 */
+.pv-thumb img.on ~ .pv-play { opacity: 0; transition: opacity .15s; }
+.pv-card:hover .pv-thumb img.on ~ .pv-play { opacity: .9; }
+.pv-dur {
+  position: absolute; right: 5px; bottom: 5px; padding: 1px 5px; border-radius: 5px;
+  background: rgba(0,0,0,.66); color: #fff; font-size: 10.5px; font-variant-numeric: tabular-nums;
+}
+.pv-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgba(255,255,255,.18); }
+.pv-prog i { display: block; height: 100%; background: var(--accent); }
+
+.pv-meta { padding: 6px 8px 8px; }
+.pv-name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-sub { font-size: 11px; color: var(--text-mute); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pv-x {
+  position: absolute; right: 5px; top: 5px; width: 22px; height: 22px;
+  border: 0; border-radius: 6px; cursor: pointer; display: grid; place-items: center;
+  background: rgba(0,0,0,.5); color: #fff; opacity: 0; transition: opacity .15s;
+}
+.pv-card:hover .pv-x { opacity: 1; }
+.pv-x svg { width: 12px; height: 12px; }
+
+.pv-empty { padding: 56px 16px; text-align: center; }
+.pv-empty-ic { color: var(--text-mute); opacity: .5; margin-bottom: 10px; }
+.pv-empty-ic svg { width: 42px; height: 42px; }
+.pv-empty p { margin: 0 0 12px; font-size: 13px; }
+
+/* 窄窗口：网格密度跟着收，别把卡片挤成一条 */
+@media (max-width: 980px) {
+  .pv-card { width: 152px; }
+  .pv-thumb { height: 86px; }
+}
 
 /* ---------------- 全屏 ---------------- */
 .pl-wrap.is-fs { border: 0; border-radius: 0; min-height: 0; }

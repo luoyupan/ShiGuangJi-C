@@ -13,7 +13,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 # 版本号单一来源：改这里即可（package.ps1 与 src\host\sgj.h 需同步）
 # FILEVERSION 必须是 4 段 16 位整数，"1.1.0" 要补成 "1,1,0,0"，否则 rc.exe 报错
-$ver = "1.1.0"
+$ver = "1.1.1"
 $verParts = $ver.Split('.')
 while ($verParts.Count -lt 4) { $verParts += "0" }
 $verComma = $verParts -join ","

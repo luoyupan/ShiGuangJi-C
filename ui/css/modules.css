@@ -514,6 +514,21 @@
 .pl-panel .pl-name { font-size: .88em; }
 .pl-panel .pl-artist { font-size: .74em; color: var(--text-mute); }
 .pl-panel .pl-dur { font-size: .78em; color: var(--text-mute); flex: 0 0 auto; }
+/* 行尾删除：平时透明（不抢注意力），悬停这一行 / 正在播的那行才露出来。
+   固定宽高占位 → 显隐不会让时长和歌名左右跳动。 */
+.pl-panel .pl-del {
+  flex: 0 0 auto; width: 26px; height: 26px; padding: 0;
+  display: grid; place-items: center;
+  border: 0; background: transparent; border-radius: 7px; cursor: pointer;
+  /* fill 也要给：图标库里多数是实心路径，默认 fill 是死黑色，不跟主题/hover 变。
+     线条图标用 --text-dim 而不是 --text-mute —— 1.1px 的细描边再叠半透明就看不见了。 */
+  color: var(--text-dim); fill: currentColor;
+  opacity: 0; transition: opacity var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.pl-panel .pl-del svg { width: 15px; height: 15px; }
+.pl-panel .pl-row:hover .pl-del { opacity: .85; }
+.pl-panel .pl-row.on .pl-del { opacity: .7; }
+.pl-panel .pl-del:hover { opacity: 1; color: #e5484d; background: color-mix(in srgb, #e5484d 13%, transparent); }
 
 /* ============================================================
    网盘模块

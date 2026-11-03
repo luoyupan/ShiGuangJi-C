@@ -17,6 +17,12 @@
     { id: 'single', name: '单曲循环', icon: 'repeatOne' },
     { id: 'shuffle', name: '随机播放', icon: 'shuffle' }
   ];
+  const SORTS = [
+    ['name', '文件名（自然序）'],
+    ['added', '最近添加'],
+    ['size', '文件大小'],
+    ['duration', '时长（短→长）']
+  ];
 
   function fmtTime(t) {
     if (!isFinite(t) || t < 0) t = 0;
@@ -45,7 +51,13 @@
       const S = {
         list: [], idx: -1, mode: 'list', rate: 1, volume: 0.8, muted: false,
         resume: true, subScale: 1, subName: '', subUrl: '', dir: '',
-        seeking: false, err: '', saving: 0, listOpen: true, fs: false, started: false
+        seeking: false, err: '', saving: 0, listOpen: true, fs: false, started: false,
+        /* 视图：lib = 视频库（左栏文件夹 + 右栏网格，和图片模块一个套路）/ play = 播放 */
+        view: 'lib',
+        roots: [], items: [], recent: [], scannedAt: 0, truncated: false,
+        kw: '', sort: 'name', scope: 'all', scanning: false,
+        thumbCache: Object.create(null),   /* path → dataURL / 'fail' */
+        durCache: Object.create(null)      /* path → 秒（抽帧顺带量出来的） */
       };
 
       /* ---------------- DOM ---------------- */
@@ -54,17 +66,19 @@
       const title = el('div', { class: 'pl-title ellipsis', text: '没有打开的影片' });
       const subChip = el('span', { class: 'pl-chip pl-subchip', style: { display: 'none' } });
 
+      const btnBack = el('button', { class: 'pl-btn', title: '回到视频库（Esc）', onclick: () => exitPlay() },
+        api.icon('back'));
       const btnFile = el('button', { class: 'pl-btn pl-txt', onclick: () => openFile() }, '打开文件');
       const btnDir = el('button', { class: 'pl-btn pl-txt', onclick: () => openDir() }, '打开文件夹');
       const btnRefresh = el('button', { class: 'pl-btn', title: '重新扫描当前文件夹', onclick: () => rescan() },
         api.icon('refresh'));
       const btnSub = el('button', { class: 'pl-btn', title: '选择字幕文件（也可以自动找同名 .srt/.ass）', onclick: () => pickSub() },
         api.icon('type'));
-      const btnList = el('button', { class: 'pl-btn', title: '播放列表', onclick: () => toggleList() },
+      const btnList = el('button', { class: 'pl-btn', title: '显示/隐藏播放列表', onclick: () => toggleList() },
         api.icon('list'));
 
       const top = el('div', { class: 'pl-top' },
-        btnFile, btnDir, btnRefresh,
+        btnBack, btnFile, btnDir, btnRefresh,
         el('div', { class: 'pl-grow' }, title),
         subChip, btnSub, btnList);
 
@@ -99,15 +113,25 @@
           el('span', { class: 'pl-volwrap' }, btnMute, vol),
           btnRate, btnShot, btnFs));
 
+      /* ---------------- 播放视图：右侧播放列表 ---------------- */
       const listBox = el('div', { class: 'pl-list' });
+      const hdCount = el('span', { class: 'pl-count', text: '0' });
       const listWrap = el('div', { class: 'pl-aside' },
         el('div', { class: 'pl-aside-hd' },
-          el('span', { text: '播放列表' }),
-          el('span', { class: 'pl-count', text: '0' }),
-          el('button', { class: 'pl-btn pl-mini', title: '清空列表', onclick: () => clearList() }, api.icon('trash'))),
+          el('span', { text: '播放列表' }), el('div', { class: 'pl-grow' }), hdCount,
+          el('button', { class: 'pl-btn pl-mini', title: '清空播放列表', onclick: () => clearList() },
+            api.icon('trash'))),
         listBox);
 
-      const wrap = el('div', { class: 'pl-wrap' }, top, el('div', { class: 'pl-body' }, stage, listWrap), ctrl);
+      const playView = el('div', { class: 'pl-wrap' },
+        top, el('div', { class: 'pl-body' }, stage, listWrap), ctrl);
+
+      /* ---------------- 库视图：左栏文件夹 + 右栏网格（和图片模块一个套路） ---------------- */
+      const sideEl = el('aside', { class: 'gside' });
+      const mainEl = el('section', { class: 'gmain' });
+      const libView = el('div', { class: 'games pl-libview' }, sideEl, mainEl);
+
+      const wrap = el('div', { class: 'pl-root' }, libView, playView);
       container.appendChild(wrap);
 
       /* ---------------- 基础操作 ---------------- */
@@ -130,8 +154,7 @@
 
       function paintList() {
         listBox.textContent = '';
-        const cnt = listWrap.querySelector('.pl-count');
-        if (cnt) cnt.textContent = String(S.list.length);
+        hdCount.textContent = String(S.list.length);
         if (!S.list.length) {
           listBox.appendChild(el('div', { class: 'pl-empty', text: '列表是空的' }));
           return;
@@ -180,12 +203,398 @@
         listWrap.style.display = S.listOpen ? '' : 'none';
       }
 
+      /* ============================================================
+         库视图：左栏文件夹 + 右栏网格
+         跟图片模块一个套路（.games/.gside/.gmain 外壳直接复用），
+         只是卡片是视频：首帧当封面、角上标时长、底部一条观看进度。
+         ============================================================ */
+      function setView(v) {
+        S.view = v === 'play' ? 'play' : 'lib';
+        libView.style.display = S.view === 'lib' ? '' : 'none';
+        playView.style.display = S.view === 'play' ? '' : 'none';
+        if (S.view === 'lib') { renderSide(); renderMain(); }
+      }
+      function exitPlay() {
+        saveNow(true);
+        try { video.pause(); } catch { /* 没 src 时 pause 会抛 */ }
+        setView('lib');
+      }
+      function progOf(p) {
+        const r = S.recent.find((x) => x.path === p);
+        return r ? { pos: r.pos || 0, dur: r.dur || 0 } : { pos: 0, dur: 0 };
+      }
+      function durOf(it) { return S.durCache[it.path] || progOf(it.path).dur || 0; }
+      function countIn(root) {
+        const r = String(root).toLowerCase();
+        return S.items.filter((x) => String(x.path || '').toLowerCase().startsWith(r)).length;
+      }
+      function fmtClock(ts) {
+        const d = new Date(Number(ts) || 0);
+        const p = (n) => String(n).padStart(2, '0');
+        return d.getFullYear()
+          ? d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes())
+          : '';
+      }
+
+      /* ---------------- 左栏 ---------------- */
+      function renderSide() {
+        sideEl.textContent = '';
+        sideEl.appendChild(el('div', { class: 'mods-side-head' },
+          el('button', { class: 'back-btn', title: '回主界面', onclick: () => window.Shell.go('#/') },
+            api.icon('back'), '返回'),
+          el('h2', { text: '播放器' })));
+
+        sideEl.appendChild(el('div', { class: 'pv-act' },
+          el('button', { class: 'btn btn-primary btn-sm', title: '添加一个放着视频的文件夹', onclick: () => addRoot() },
+            api.icon('plus'), '添加文件夹'),
+          el('button', { class: 'btn btn-sm' + (S.scanning ? ' is-busy' : ''), title: '重新扫描所有文件夹', onclick: () => rescanLib() },
+            api.icon('refresh'), S.scanning ? '扫描中…' : '重新扫描')));
+
+        const list = el('div', { class: 'gside-list' });
+        sideEl.appendChild(list);
+        if (!S.roots.length) {
+          list.appendChild(el('div', { class: 'pv-side-empty' },
+            el('p', { class: 'text-dim', text: '还没有添加文件夹' })));
+        } else {
+          S.roots.forEach((r) => {
+            /* 显示「文件夹名 + 上级路径」而不是整条：整条一上来就被省略号吃掉 */
+            const seg = String(r).replace(/[\\/]+$/, '').split(/[\\/]/);
+            const leaf = seg[seg.length - 1] || r;
+            const parent = seg.slice(0, -1).join('\\');
+            list.appendChild(el('div', { class: 'pv-root', title: r },
+              api.icon('folder'),
+              el('div', { class: 'pv-root-m' },
+                el('div', { class: 'pv-root-n', text: leaf }),
+                el('div', { class: 'pv-root-s', text: countIn(r) + ' 个 · ' + parent })),
+              el('button', {
+                class: 'pv-root-x', title: '移除这个文件夹（不动文件）',
+                onclick: (e) => { if (e && e.stopPropagation) e.stopPropagation(); removeRoot(r); }
+              }, api.icon('close'))));
+          });
+        }
+
+        /* 底部统计：一共多少、看过多少 —— 一眼判断库有没有扫进来。
+           ⚠️ 不显示「总时长」：时长是抽帧时顺手量出来的，只覆盖已经滚到的卡片，
+              写个偏小的总数比不写更误导。 */
+        const watched = S.items.filter((x) => progOf(x.path).pos > 5).length;
+        sideEl.appendChild(el('div', { class: 'pv-stat' },
+          el('div', { class: 'pv-stat-l' },
+            el('span', { class: 'text-dim', text: '共' }), el('b', { text: String(S.items.length) }),
+            el('span', { class: 'text-dim', text: '个视频' })),
+          el('div', { class: 'pv-stat-l' }, el('span', { class: 'pv-dot' }), el('span', { text: '看过 ' + watched })),
+          S.scannedAt ? el('div', { class: 'pv-stat-l' },
+            el('span', { class: 'text-dim', text: '上次扫描 ' + fmtClock(S.scannedAt) })) : null));
+      }
+
+      /* ---------------- 右栏：工具行 + 网格 ---------------- */
+      function renderMain() {
+        mainEl.textContent = '';
+        const bar = el('div', { class: 'pv-bar' },
+          el('div', { class: 'pv-tabs' },
+            el('button', {
+              class: 'pv-tab' + (S.scope === 'all' ? ' on' : ''), title: '文件夹里的全部视频',
+              onclick: () => { S.scope = 'all'; renderMain(); }
+            }, api.icon('grid'), '全部'),
+            el('button', {
+              class: 'pv-tab' + (S.scope === 'recent' ? ' on' : ''), title: '播放过的（接着看）',
+              onclick: () => { S.scope = 'recent'; renderMain(); }
+            }, api.icon('clock'), '最近看过')),
+          el('div', { class: 'pv-bar-right' },
+            api.icon('search'),
+            el('input', {
+              class: 'pv-kw', type: 'text', placeholder: '搜文件名…', value: S.kw,
+              oninput: (e) => { S.kw = e.target.value; paintWall(); }
+            })),
+          el('select', {
+            class: 'pv-sel', title: '排序方式',
+            onchange: (e) => { S.sort = e.target.value; paintWall(); }
+          }, SORTS.map(([v, t]) => el('option', { value: v, selected: S.sort === v, text: t }))),
+          S.scope === 'recent' && S.recent.length
+            ? el('button', {
+              class: 'btn btn-sm', title: '清空「最近看过」记录（不动文件）', onclick: () => clearRecent()
+            }, api.icon('trash'), '清空')
+            : null,
+          el('button', { class: 'btn btn-sm btn-primary', title: '直接挑一个视频播', onclick: () => openFile() },
+            api.icon('play'), '打开文件'));
+        mainEl.appendChild(bar);
+        const body = el('div', { class: 'pv-body' });
+        mainEl.appendChild(body);
+        paintWallTo(body);
+      }
+
+      function sourceList() {
+        return S.scope === 'recent'
+          ? S.recent.map((r) => ({ path: r.path, name: r.name || baseName(r.path), size: 0, mtime: (r.at || 0) * 1000 }))
+          : S.items;
+      }
+      function sortedList() {
+        const src = sourceList();
+        const kw = String(S.kw || '').trim().toLowerCase();
+        const out = kw ? src.filter((x) => String(x.name || '').toLowerCase().includes(kw)) : src.slice();
+        /* 自然序：数字感知（EP2 在 EP10 前）+ 拉丁/数字打头的排在前、中文名的排在后。
+           只靠 localeCompare('zh', {numeric:true}) 会把「番外」排到 EP 系列前面 ——
+           按集数命名的剧集列表里那样很反直觉。 */
+        const nat = (a, b) => {
+          const A = String(a || ''), B = String(b || '');
+          const aAscii = /^[\x00-\x7f]/.test(A), bAscii = /^[\x00-\x7f]/.test(B);
+          if (aAscii !== bAscii) return aAscii ? -1 : 1;
+          return A.localeCompare(B, 'zh', { numeric: true, sensitivity: 'base' });
+        };
+        if (S.sort === 'added') out.sort((a, b) => (b.mtime || 0) - (a.mtime || 0));
+        else if (S.sort === 'size') out.sort((a, b) => (b.size || 0) - (a.size || 0));
+        else if (S.sort === 'duration') out.sort((a, b) => durOf(a) - durOf(b));
+        else out.sort((a, b) => nat(a.name, b.name));
+        return out;
+      }
+      function paintWall() {
+        const body = mainEl.querySelector('.pv-body');
+        if (body) paintWallTo(body);
+      }
+      function paintWallTo(body) {
+        body.textContent = '';
+        const items = sortedList();
+        if (!S.items.length && !S.recent.length) {
+          body.appendChild(el('div', { class: 'pv-empty' },
+            el('div', { class: 'pv-empty-ic' }, api.icon('folder')),
+            el('p', { class: 'text-dim', text: '还没有视频。先在左边添加一个放着视频的文件夹。' }),
+            el('button', { class: 'btn btn-primary btn-sm', onclick: () => addRoot() }, '添加文件夹')));
+          return;
+        }
+        if (!items.length) {
+          body.appendChild(el('div', { class: 'pv-empty' },
+            el('p', { class: 'text-dim', text: S.scope === 'recent' ? '还没有播放记录' : '没有匹配的视频' })));
+          return;
+        }
+        const grid = el('div', { class: 'pv-grid' });
+        items.forEach((it) => grid.appendChild(card(it, items)));
+        body.appendChild(grid);
+        ensureThumbs(body);
+      }
+
+      function card(it, list) {
+        const pr = progOf(it.path);
+        const d = durOf(it);
+        const pct = (pr.dur > 0 && pr.pos > 0) ? Math.max(0, Math.min(100, pr.pos / pr.dur * 100)) : 0;
+        return el('div', {
+          class: 'pv-card', title: it.path, dataset: { path: it.path },
+          onclick: () => enterPlay(list, it)
+        },
+          el('div', { class: 'pv-thumb' },
+            el('img', { dataset: { file: it.path }, alt: it.name || '' }),
+            el('span', { class: 'pv-play' }, api.icon('play')),
+            d ? el('span', { class: 'pv-dur', text: fmtTime(d) }) : null,
+            pct ? el('div', { class: 'pv-prog' }, el('i', { style: { width: pct.toFixed(1) + '%' } })) : null),
+          el('div', { class: 'pv-meta' },
+            el('div', { class: 'pv-name', text: it.name || baseName(it.path) }),
+            el('div', { class: 'pv-sub', text: subOf(pr, d) })),
+          S.scope === 'recent' ? el('button', {
+            class: 'pv-x', title: '从「最近看过」移除（不删文件）',
+            onclick: (e) => { if (e && e.stopPropagation) e.stopPropagation(); removeRecent(it.path); }
+          }, api.icon('close')) : null);
+      }
+      function subOf(pr, d) {
+        if (pr.pos > 5 && pr.dur > 0) return '看到 ' + fmtTime(pr.pos) + ' / ' + fmtTime(pr.dur);
+        if (d > 0) return fmtTime(d);
+        return '还没看过';
+      }
+
+      /* ---- 封面：自己抽首帧（WebView2 解不了的就留占位块，不报错） ---- */
+      const TH_MAX = 3;              /* 同时解码 3 个够了，再多会把界面拖卡 */
+      let thBusy = 0;
+      const thQueue = [];
+      function ensureThumbs(box) {
+        if (!S.io) {
+          S.io = new IntersectionObserver((ents) => {
+            ents.forEach((en) => {
+              if (!en.isIntersecting) return;
+              S.io.unobserve(en.target);
+              thQueue.push(en.target);
+              pumpThumbs();
+            });
+          }, { rootMargin: '260px 0px' });
+        }
+        box.querySelectorAll('img[data-file]').forEach((img) => {
+          const p = img.dataset.file;
+          const hit = S.thumbCache[p];
+          if (hit === 'fail') { img.classList.add('bad'); img.removeAttribute('data-file'); return; }
+          if (hit) { img.src = hit; img.classList.add('on'); img.removeAttribute('data-file'); return; }
+          if (!img.dataset.queued) { img.dataset.queued = '1'; S.io.observe(img); }
+        });
+      }
+      function pumpThumbs() {
+        while (thBusy < TH_MAX && thQueue.length) {
+          const img = thQueue.shift();
+          if (!img || !img.isConnected) continue;
+          const path = img.dataset.file;
+          thBusy++;
+          grabFrame(path).then((res) => {
+            if (res && res.data) {
+              S.thumbCache[path] = res.data;
+              if (res.dur) { S.durCache[path] = res.dur; paintDurOn(path, res.dur); }
+              if (img.isConnected) { img.src = res.data; img.classList.add('on'); }
+            } else {
+              S.thumbCache[path] = 'fail';
+              if (img.isConnected) img.classList.add('bad');
+            }
+          }).catch(() => { /* 抽帧失败就是没封面，不影响列表 */ })
+            .finally(() => { thBusy--; pumpThumbs(); });
+        }
+      }
+      function grabFrame(path) {
+        return new Promise((resolve) => {
+          call('stat', path).then((st) => {
+            if (!st || !st.url) return resolve(null);
+            const v = document.createElement('video');
+            v.preload = 'auto';
+            v.muted = true;
+            v.playsInline = true;
+            let done = false;
+            const finish = (r) => {
+              if (done) return;
+              done = true;
+              clearTimeout(timer);
+              try { v.removeAttribute('src'); v.load(); } catch { /* ignore */ }
+              resolve(r);
+            };
+            const timer = setTimeout(() => finish(null), 9000);
+            v.addEventListener('loadeddata', () => {
+              /* 跳到 12% 处抽，避开片头黑场；太长的片子最多跳 5 分钟处 */
+              try { v.currentTime = Math.min(Math.max(0.2, (v.duration || 0) * 0.12), 300); }
+              catch { finish({ data: snapFrame(v), dur: v.duration || 0 }); }
+            }, { once: true });
+            v.addEventListener('seeked', () => finish({ data: snapFrame(v), dur: v.duration || 0 }), { once: true });
+            v.addEventListener('error', () => finish(null), { once: true });
+            v.src = st.url;
+          }).catch(() => resolve(null));
+        });
+      }
+      function snapFrame(v) {
+        if (!v || !v.videoWidth) return null;
+        const w = 320;
+        const h = Math.max(1, Math.round(w * v.videoHeight / v.videoWidth));
+        const cv = document.createElement('canvas');
+        cv.width = w;
+        cv.height = h;
+        try {
+          cv.getContext('2d').drawImage(v, 0, 0, w, h);
+          return cv.toDataURL('image/jpeg', 0.72);
+        } catch { return null; }
+      }
+      function paintDurOn(path, dur) {
+        Array.from(mainEl.querySelectorAll('.pv-card')).forEach((c) => {
+          if (c.dataset.path !== path) return;
+          let b = c.querySelector('.pv-dur');
+          if (!b) {
+            b = el('span', { class: 'pv-dur' });
+            const th = c.querySelector('.pv-thumb');
+            if (th) th.appendChild(b);
+          }
+          b.textContent = fmtTime(dur);
+          const sub = c.querySelector('.pv-sub');
+          const pr = progOf(path);
+          if (sub && !(pr.pos > 5 && pr.dur > 0)) sub.textContent = fmtTime(dur);
+        });
+      }
+
+      /* ---------------- 库数据 ---------------- */
+      async function loadLib() {
+        try {
+          const r = await call('roots');
+          if (r && Array.isArray(r.items)) {
+            S.roots = Array.isArray(r.roots) ? r.roots : [];
+            S.items = r.items;
+            S.truncated = !!r.truncated;
+            S.scannedAt = Date.now();
+          }
+        } catch (e) { api.toast('读取视频库失败：' + e.message, 'err'); }
+        try {
+          const rc = await call('recent');
+          if (Array.isArray(rc)) S.recent = rc;
+        } catch { /* 最近记录读不到不影响网格 */ }
+        renderSide();
+        renderMain();
+      }
+      async function addRoot() {
+        try {
+          const r = await call('pickRoot');
+          if (!r) return;
+          if (Array.isArray(r.roots)) S.roots = r.roots;
+          if (Array.isArray(r.items)) S.items = r.items;
+          S.scannedAt = Date.now();
+          const rc = await call('recent').catch(() => null);
+          if (Array.isArray(rc)) S.recent = rc;
+          renderSide();
+          renderMain();
+          if (!S.items.length) api.toast('这个文件夹里没有找到视频文件', 'err');
+          else api.toast('已添加：' + (r.dir || '') + '（共 ' + S.items.length + ' 个视频）', 'ok');
+        } catch (e) { api.toast('添加失败：' + e.message, 'err'); }
+      }
+      async function removeRoot(p) {
+        try { await call('removeRoot', p); } catch { /* ignore */ }
+        const low = String(p).toLowerCase();
+        S.roots = S.roots.filter((x) => String(x).toLowerCase() !== low);
+        S.items = S.items.filter((x) => !String(x.path || '').toLowerCase().startsWith(low));
+        renderSide();
+        renderMain();
+        api.toast('已移除文件夹（文件都还在）');
+      }
+      async function rescanLib() {
+        if (S.scanning) return;
+        S.scanning = true;
+        renderSide();
+        api.toast('正在扫描…', 'info');
+        try {
+          const r = await call('roots');
+          if (r && Array.isArray(r.items)) {
+            S.roots = Array.isArray(r.roots) ? r.roots : S.roots;
+            S.items = r.items;
+            S.truncated = !!r.truncated;
+            S.scannedAt = Date.now();
+          }
+          const rc = await call('recent').catch(() => null);
+          if (Array.isArray(rc)) S.recent = rc;
+          api.toast('已刷新：' + S.items.length + ' 个视频', 'ok');
+        } catch (e) { api.toast('刷新失败：' + e.message, 'err'); }
+        S.scanning = false;
+        renderSide();
+        renderMain();
+      }
+      async function removeRecent(p) {
+        try { await call('libRemove', p); } catch { /* ignore */ }
+        S.recent = S.recent.filter((x) => x.path !== p);
+        renderMain();
+      }
+      async function clearRecent() {
+        try { await call('libClear'); } catch { /* ignore */ }
+        S.recent = [];
+        renderMain();
+        api.toast('「最近看过」已清空（文件都还在）', 'ok');
+      }
+      /* 记一条「最近看过」（播放过的由 playAt 里的 mark 记，这里补「加进列表但还没播」的） */
+      async function libTouch(paths) {
+        const arr = (paths || []).filter((p) => !!p);
+        if (!arr.length) return;
+        try { await call('libTouch', arr); } catch { /* 记录失败不影响播放 */ }
+        const rc = await call('recent').catch(() => null);
+        if (Array.isArray(rc)) S.recent = rc;
+      }
+      async function enterPlay(items, it) {
+        const arr = (items || []).filter((x) => x && x.path);
+        const at = arr.findIndex((x) => x.path === it.path);
+        if (at < 0) return;
+        setList(arr.map((x) => ({ path: x.path, name: x.name, url: x.url || '' })), '');
+        setView('play');
+        await playAt(at);
+      }
+
       /* ---------------- 打开 ---------------- */
       async function openFile() {
         try {
           const r = await call('openFile');
           if (!r || !r.path) return;
           setList([r], r.dir);
+          setView('play');
+          libTouch([r.path]);
           await playAt(0);
         } catch (e) { api.toast('打开失败：' + e.message, 'err'); }
       }
@@ -197,6 +606,8 @@
           setList(r.items, r.dir);
           if (!S.list.length) { api.toast('这个文件夹里没有找到视频文件', 'err'); return; }
           api.toast('找到 ' + S.list.length + ' 个视频' + (r.truncated ? '（太多，只取了前 3000 个）' : ''), 'ok');
+          setView('play');
+          libTouch(S.list.map((x) => x.path));
           await playAt(0);
         } catch (e) { api.toast('扫描失败：' + e.message, 'err'); }
       }
@@ -225,6 +636,11 @@
         showErr('');
         showHint(false);
         S.started = false;
+        /* 「最近看过」的条目只存了路径，播之前现问一次 url（/local/…，宿主支持 Range） */
+        if (!it.url) {
+          const st = await call('stat', it.path).catch(() => null);
+          if (st && st.url) it.url = st.url;
+        }
         video.src = it.url || '';
         video.load();
         try { await call('mark', it.path); } catch { /* 最近播放失败不影响播放 */ }
@@ -469,6 +885,9 @@
           if (e.key !== 'Escape') return;
         }
         const k = e.key;
+        /* 库视图里只认 Esc 和输入框，播放的快捷键别在网格上乱响应 */
+        if (S.view === 'lib') return;
+        if (k === 'Escape') { exitPlay(); return; }
         if (k === ' ' || k === 'Spacebar') { e.preventDefault(); toggle(); return; }
         if (k === 'ArrowLeft') { e.preventDefault(); video.currentTime = Math.max(0, video.currentTime - (e.shiftKey ? 30 : 5)); return; }
         if (k === 'ArrowRight') { e.preventDefault(); video.currentTime = Math.min(video.duration || 0, video.currentTime + (e.shiftKey ? 30 : 5)); return; }
@@ -501,6 +920,7 @@
         S.list = [{ path: f.name, name: f.name, url }];
         S.idx = 0;
         paintList();
+        setView('play');
         setTitle(f.name);
         showErr('');
         video.src = url;
@@ -516,6 +936,8 @@
         paintMode();
         paintVol();
         paintList();
+        setView('lib');
+        try { await loadLib(); } catch { /* 库读不到就空着 */ }
         try {
           const st = await call('settings');
           if (st) {
@@ -544,6 +966,9 @@
         window.removeEventListener('beforeunload', onHide);
         document.removeEventListener('fullscreenchange', onFsChange);
         if (cueStyle && cueStyle.parentNode) cueStyle.parentNode.removeChild(cueStyle);
+        /* IntersectionObserver 不 disconnect 会一直盯着已卸载的 img，抽帧队列也要清掉 */
+        if (S.io) { try { S.io.disconnect(); } catch { /* ignore */ } S.io = null; }
+        thQueue.length = 0;
         try { video.pause(); video.removeAttribute('src'); video.load(); } catch { /* ignore */ }
       };
     }

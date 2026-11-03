@@ -399,7 +399,7 @@ const MusicView = {
         el('p', { text: '点右侧「导入文件夹」开始建立你的音乐库。' })));
     } else {
       main.appendChild(el('div', { class: 'music-cards' },
-        recent.map((t) => el('div', { class: 'mcard', onclick: () => this.playAt(this.tracks.indexOf(t)) },
+        recent.map((t) => el('div', { class: 'mcard', onclick: () => this.playAt(recent.indexOf(t), recent) },
           el('div', { class: 'mc-cover' }, t.cover ? el('img', { src: t.cover }) : uiSpan('musicNote')),
           el('div', { class: 'mc-title ellipsis', text: t.title }),
           el('div', { class: 'mc-sub ellipsis', text: t.artist })
@@ -717,7 +717,7 @@ const MusicView = {
             oninput: (e) => { this.localQuery = e.target.value; this.paintLocal(); },
             onkeydown: (e) => {
               if (e.key === 'Escape') { this.clearLocalSearch(); }
-              else if (e.key === 'Enter') { const f = this.filteredTracks()[0]; if (f) this.playAt(this.tracks.indexOf(f)); }
+              else if (e.key === 'Enter') { const list = this.filteredTracks(); if (list.length) this.playAt(0, list); }
             }
           }),
           el('button', {
@@ -792,8 +792,8 @@ const MusicView = {
 
   /** 搜索命中的曲目（空格分词，多词要**全都**命中；标题 / 歌手 / 专辑任一）
    *  + 歌手筛选 + 排序（两个都在 js/music-sort.js 里，纯函数有单测）。
-   *  ⚠️ 返回的是**新数组**，原 `this.tracks` 顺序不动 —— 行点击要用
-   *     `this.tracks.indexOf(t)` 还原成曲库原索引去播放。 */
+   *  ⚠️ 返回的是**新数组**，原 `this.tracks` 顺序不动 —— 但这份数组同时也是
+   *     **播放队列**（行点击 `playAt(i, list)`），所以顺序 = 用户看到并排好的顺序。 */
   filteredTracks() {
     const MS = window.MusicSort;
     const kw = (this.localQuery || '').trim().toLowerCase();
@@ -841,9 +841,9 @@ const MusicView = {
     }
     const ul = el('div', { class: 'track-list' });
     list.forEach((t, i) => {
-      /* ⚠️ 序号显示的是**结果里的第几首**，但播放要传回**曲库里的原索引** ——
-         搜索状态下这两个数不是一回事，传错就播到别的歌去了。 */
-      ul.appendChild(this.trackRow(t, i + 1, () => this.playAt(this.tracks.indexOf(t)), [
+      /* 序号、播放下标、队列顺序**统一用这份 list** —— 界面上排成什么顺序，
+         点下去就按什么顺序往后播（以前传的是曲库原索引，排序白排）。 */
+      ul.appendChild(this.trackRow(t, i + 1, () => this.playAt(i, list), [
         el('button', { class: 'btn btn-sm btn-ghost', title: '从库中移除（不删文件）',
           onclick: (e) => { e.stopPropagation(); API.raw.music.removeTrack(t.id).then(() => this.reload()); } }, uiSpan('trash'))
       ]));
@@ -1463,8 +1463,16 @@ const MusicView = {
   /* ---------------- 播放 ---------------- */
   current() { return this.index >= 0 ? this.queue[this.index] : null; },
 
-  playAt(i) {
-    this.queue = this.tracks.slice();
+  /**
+   * 从「当前看到的那份列表」开始播。
+   * ⚠️ `list` 必须是**界面上可见顺序**的那份（filteredTracks 的结果），不是 `this.tracks` ——
+   *    以前固定用曲库原顺序，用户把列表排成「最近添加」再点歌，播的却是老顺序，
+   *    下一首跳到哪全凭原库下标，看起来就像「顺序设置没生效」。
+   *    `i` 是 **list 里的下标**，不再是曲库索引。
+   */
+  playAt(i, list) {
+    const src = (Array.isArray(list) && list.length) ? list : this.tracks;
+    this.queue = src.slice();
     this.index = i;
     this.play();
   },
@@ -1721,10 +1729,54 @@ const MusicView = {
         el('div', { class: 'pl-main' },
           el('span', { class: 'pl-name ellipsis', text: t.title || window.util.baseName(t.path) }),
           el('span', { class: 'pl-artist ellipsis', text: t.artist || '' })),
-        el('span', { class: 'pl-dur', text: t.duration ? formatDuration(t.duration) : '' })
+        el('span', { class: 'pl-dur', text: t.duration ? formatDuration(t.duration) : '' }),
+        /* 悬停才显示（CSS 控制），点它只把这歌从**队列**里拿掉，曲库文件不动。 */
+        el('button', {
+          class: 'pl-del', title: '从播放列表移除（不删文件）',
+          onclick: (e) => { e.stopPropagation(); this.removeFromQueue(i); }
+        }, uiSpan('trashLine'))
       ));
     });
     p.appendChild(box);
+  },
+
+  /**
+   * 从播放队列里删掉第 i 首。
+   * 三种情况都要对上号，否则「删的是一首、播的是另一首」：
+   *   i < 当前 → 当前这首的下标整体前移一位（歌不变）
+   *   i = 当前 → 原地接着播下一首（下标不用动，因为后面的元素已经补上来了）；
+   *              删的正好是最后一首时退到新的末尾，别把 index 停在数组外
+   *   i > 当前 → 什么都不用改
+   */
+  removeFromQueue(i) {
+    const t = this.queue[i];
+    if (!t) return;
+    const name = t.title || window.util.baseName(t.path);
+    const wasCurrent = i === this.index;
+    this.queue.splice(i, 1);
+
+    if (!this.queue.length) {
+      this.index = -1;
+      if (this.audio) { this.audio.pause(); this.audio.removeAttribute('src'); }
+      this.renderPlaylistPanel();
+      this.renderPlayer();
+      window.Shell.toast(`已移除「${name}」，播放列表空了`);
+      return;
+    }
+    if (i < this.index) {
+      this.index -= 1;
+    } else if (wasCurrent) {
+      const wasPlaying = !!(this.audio && !this.audio.paused);
+      if (this.index >= this.queue.length) this.index = this.queue.length - 1;
+      this.play();                       // 内部会重画播放条与歌词
+      if (!wasPlaying) this.audio.pause();   // 原本停在暂停状态，别擅自开始放
+      this.renderPlaylistPanel();
+      window.Shell.toast(`已移除「${name}」，接着播下一首`);
+      return;
+    }
+    this.renderPlaylistPanel();
+    this.renderPlayer();
+    window.Shell.toast(`已从播放列表移除「${name}」`);
   },
 
   renderPlayer() {

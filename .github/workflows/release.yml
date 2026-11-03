@@ -11,7 +11,7 @@ permissions:
 
 env:
   # 版本号单一来源：发新版只改这一行（build.ps1 / package.ps1 / src\host\sgj.h 需同步）
-  SGJ_VER: "1.1.0"
+  SGJ_VER: "1.1.1"
 
 jobs:
   build:
@@ -48,7 +48,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.SGJ_VER }}
-          name: 拾光集 C 版 ${{ env.SGJ_VER }} · 修 bug 与新功能
+          name: 拾光集 C 版 ${{ env.SGJ_VER }} · 播放器视频库 + 音乐播放顺序修复
           body_path: docs/发布说明-v${{ env.SGJ_VER }}.md
           files: |
             dist/ShiGuangJi-${{ env.SGJ_VER }}-win64.zip

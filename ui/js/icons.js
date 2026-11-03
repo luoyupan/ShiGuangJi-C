@@ -26,6 +26,9 @@ const ICON = {
     plus: svg('<path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/>'),
     refresh: svg('<path d="M12 4V1L7 5l5 4V6a6 6 0 11-6 6H4a8 8 0 108-8z"/>'),
     trash: svg('<path d="M7 4h10l-1 2h4v2H4V6h4L7 4zm-1 6h12l-1 12a2 2 0 01-2 2H8a2 2 0 01-2-2L6 10z"/>'),
+    /* 细线条版垃圾桶：小尺寸（15px 左右）下比实心那个清爽，
+       而且 stroke 走 currentColor —— 会跟着文字颜色和 hover 变色（实心版是死黑色）。 */
+    trashLine: svg('<path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M10 11v6M14 11v6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>'),
     download: svg('<path d="M11 3h2v9l3.5-3.5 1.4 1.4L12 16l-5.9-6.1 1.4-1.4L11 12V3zM5 19h14v2H5z"/>'),
     link: svg('<path d="M10 13a4 4 0 015.6 0l3-3a4 4 0 00-5.6-5.6l-2 2 1.4 1.4 2-2a2 2 0 012.8 2.8l-3 3A2 2 0 0111 11l-1 1zM14 11a4 4 0 01-5.6 0l-3 3a4 4 0 005.6 5.6l2-2-1.4-1.4-2 2a2 2 0 01-2.8-2.8l3-3A2 2 0 0113 13l1-1z"/>'),
     star: svg('<path d="M12 3l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 18.9 6.2 21l1.1-6.5L2.6 9.8l6.5-.9z"/>'),
